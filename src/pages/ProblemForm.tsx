@@ -101,6 +101,7 @@ export function ProblemForm() {
         difficulty: form.difficulty,
         leetcode_url: form.leetcode_url || null,
         notes: form.notes || null,
+        content: fetchedContent,
         tag_ids: form.tag_ids,
       }
 

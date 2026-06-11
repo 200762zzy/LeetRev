@@ -1,9 +1,11 @@
 import { Outlet, NavLink } from 'react-router-dom'
-import { BookOpen, BarChart3, Github } from 'lucide-react'
+import { BookOpen, BarChart3, Tags, Settings as SettingsIcon, Github } from 'lucide-react'
 
 const navItems = [
   { to: '/', icon: BarChart3, label: '概览' },
   { to: '/problems', icon: BookOpen, label: '题目' },
+  { to: '/tags', icon: Tags, label: '标签' },
+  { to: '/settings', icon: SettingsIcon, label: '设置' },
 ]
 
 export function Layout() {

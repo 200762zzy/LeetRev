@@ -1,29 +1,40 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { invoke } from '@tauri-apps/api/core'
-import { Plus, Search, ArrowUpDown, Trash2, Edit3 } from 'lucide-react'
-import type { Problem, ProblemFilters } from '../types'
+import { Plus, Search, ArrowUpDown, Trash2, Edit3, ChevronLeft, ChevronRight } from 'lucide-react'
+import type { Problem, ProblemFilters, Tag } from '../types'
 import { difficultyColor, statusColor, statusLabel } from '../lib/utils'
 
 export function Problems() {
   const navigate = useNavigate()
   const [problems, setProblems] = useState<Problem[]>([])
+  const [totalCount, setTotalCount] = useState(0)
   const [loading, setLoading] = useState(true)
+  const [allTags, setAllTags] = useState<Tag[]>([])
   const [filters, setFilters] = useState<ProblemFilters>({
     search: '',
     difficulty: '',
     status: '',
+    tag_id: null,
     sort_by: 'leetcode_id',
     sort_order: 'desc',
     page: 1,
     page_size: 20,
   })
 
+  useEffect(() => {
+    invoke<Tag[]>('get_tags').then(setAllTags).catch(console.error)
+  }, [])
+
   const loadProblems = useCallback(async () => {
     setLoading(true)
     try {
-      const data = await invoke<Problem[]>('get_problems', { filters })
+      const [data, total] = await Promise.all([
+        invoke<Problem[]>('get_problems', { filters }),
+        invoke<number>('get_problems_count', { filters }),
+      ])
       setProblems(data)
+      setTotalCount(total)
     } catch (e) {
       console.error(e)
     }
@@ -33,6 +44,12 @@ export function Problems() {
   useEffect(() => {
     loadProblems()
   }, [loadProblems])
+
+  const totalPages = Math.max(1, Math.ceil(totalCount / (filters.page_size ?? 20)))
+
+  const goToPage = (page: number) => {
+    setFilters((f) => ({ ...f, page: Math.max(1, Math.min(page, totalPages)) }))
+  }
 
   const handleDelete = async (id: number) => {
     if (!confirm('确定删除这道题吗？')) return
@@ -49,6 +66,7 @@ export function Problems() {
       ...f,
       sort_by: field as ProblemFilters['sort_by'],
       sort_order: f.sort_by === field && f.sort_order === 'asc' ? 'desc' : 'asc',
+      page: 1,
     }))
   }
 
@@ -66,7 +84,7 @@ export function Problems() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-zinc-900">题目列表</h1>
-          <p className="mt-1 text-sm text-zinc-500">共 {problems.length} 道题目</p>
+          <p className="mt-1 text-sm text-zinc-500">共 {totalCount} 道题目</p>
         </div>
         <button
           onClick={() => navigate('/problems/new')}
@@ -107,6 +125,16 @@ export function Problems() {
           <option value="attempted">尝试过</option>
           <option value="solved">已解决</option>
           <option value="revisit">需复习</option>
+        </select>
+        <select
+          className="input-field w-36"
+          value={filters.tag_id ?? ''}
+          onChange={(e) => setFilters((f) => ({ ...f, tag_id: e.target.value ? Number(e.target.value) : null, page: 1 }))}
+        >
+          <option value="">全部标签</option>
+          {allTags.map((t) => (
+            <option key={t.id} value={t.id}>{t.name}</option>
+          ))}
         </select>
       </div>
 
@@ -166,7 +194,8 @@ export function Problems() {
               problems.map((p) => (
                 <tr
                   key={p.id}
-                  className="transition-colors hover:bg-zinc-50/50"
+                  className="cursor-pointer transition-colors hover:bg-zinc-50/50"
+                  onClick={() => navigate(`/problems/${p.id}`)}
                 >
                   <td className="px-4 py-3 text-sm font-mono text-zinc-500">
                     {p.leetcode_id ?? '-'}
@@ -209,14 +238,14 @@ export function Problems() {
                     <div className="flex items-center justify-end gap-1">
                       <button
                         className="btn-ghost p-1.5"
-                        onClick={() => navigate(`/problems/${p.id}/edit`)}
+                        onClick={(e) => { e.stopPropagation(); navigate(`/problems/${p.id}/edit`) }}
                         title="编辑"
                       >
                         <Edit3 className="h-4 w-4" />
                       </button>
                       <button
                         className="btn-ghost p-1.5 text-red-500 hover:bg-red-50 hover:text-red-600"
-                        onClick={() => handleDelete(p.id)}
+                        onClick={(e) => { e.stopPropagation(); handleDelete(p.id) }}
                         title="删除"
                       >
                         <Trash2 className="h-4 w-4" />
@@ -229,6 +258,44 @@ export function Problems() {
           </tbody>
         </table>
       </div>
+
+      {totalPages > 1 && (
+        <div className="flex items-center justify-center gap-2">
+          <button
+            className="btn-ghost p-2 disabled:opacity-30"
+            disabled={filters.page === 1}
+            onClick={() => goToPage((filters.page ?? 1) - 1)}
+          >
+            <ChevronLeft className="h-4 w-4" />
+          </button>
+          {Array.from({ length: totalPages }, (_, i) => i + 1)
+            .filter((p) => p === 1 || p === totalPages || Math.abs(p - (filters.page ?? 1)) <= 2)
+            .map((p, idx, arr) => (
+              <span key={p} className="flex items-center gap-1">
+                {idx > 0 && arr[idx - 1] !== p - 1 && (
+                  <span className="px-1 text-xs text-zinc-400">...</span>
+                )}
+                <button
+                  className={`min-w-[2rem] rounded-lg px-2 py-1 text-sm font-medium transition-colors ${
+                    p === (filters.page ?? 1)
+                      ? 'bg-primary-100 text-primary-700'
+                      : 'text-zinc-600 hover:bg-zinc-100'
+                  }`}
+                  onClick={() => goToPage(p)}
+                >
+                  {p}
+                </button>
+              </span>
+            ))}
+          <button
+            className="btn-ghost p-2 disabled:opacity-30"
+            disabled={(filters.page ?? 1) >= totalPages}
+            onClick={() => goToPage((filters.page ?? 1) + 1)}
+          >
+            <ChevronRight className="h-4 w-4" />
+          </button>
+        </div>
+      )}
     </div>
   )
 }

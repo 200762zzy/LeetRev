@@ -35,6 +35,7 @@ impl Database {
                 status TEXT NOT NULL DEFAULT 'todo' CHECK(status IN ('todo','attempted','solved','revisit')),
                 leetcode_url TEXT,
                 notes TEXT,
+                content TEXT,
                 solution_code TEXT,
                 code_language TEXT,
                 created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
@@ -55,7 +56,53 @@ impl Database {
             BEGIN
                 UPDATE problems SET updated_at = datetime('now','localtime') WHERE id = OLD.id;
             END;
+
+            CREATE TABLE IF NOT EXISTS code_snippets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                problem_id INTEGER NOT NULL,
+                language TEXT NOT NULL,
+                code TEXT NOT NULL DEFAULT '',
+                version INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+                FOREIGN KEY (problem_id) REFERENCES problems(id) ON DELETE CASCADE
+            );
+
+            CREATE TRIGGER IF NOT EXISTS trg_code_snippets_ai
+            AFTER INSERT ON code_snippets
+            BEGIN
+                UPDATE problems SET updated_at = datetime('now','localtime') WHERE id = NEW.problem_id;
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS trg_code_snippets_ad
+            AFTER DELETE ON code_snippets
+            BEGIN
+                UPDATE problems SET updated_at = datetime('now','localtime') WHERE id = OLD.problem_id;
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS trg_code_snippets_au
+            AFTER UPDATE ON code_snippets
+            BEGIN
+                UPDATE problems SET updated_at = datetime('now','localtime') WHERE id = NEW.problem_id;
+            END;
         ")?;
+
+        // Migration: add content column for databases created before Phase 5
+        let has_content = conn
+            .prepare("PRAGMA table_info(problems)")?
+            .query_map([], |row| row.get::<_, String>(1))?
+            .filter_map(|r| r.ok())
+            .any(|name| name == "content");
+        if !has_content {
+            conn.execute_batch("ALTER TABLE problems ADD COLUMN content TEXT")?;
+        }
+
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );"
+        )?;
+
         Ok(())
     }
 
@@ -91,10 +138,71 @@ impl Database {
         Ok(tags)
     }
 
+    pub fn create_tag(&self, name: &str, color: &str) -> Result<Tag> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO tags (name, color) VALUES (?1, ?2)",
+            params![name, color],
+        )?;
+        let id = conn.last_insert_rowid();
+        Ok(Tag { id, name: name.into(), color: color.into() })
+    }
+
+    pub fn update_tag(&self, id: i64, name: &str, color: &str) -> Result<Tag> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE tags SET name = ?1, color = ?2 WHERE id = ?3",
+            params![name, color, id],
+        )?;
+        Ok(Tag { id, name: name.into(), color: color.into() })
+    }
+
+    pub fn delete_tag(&self, id: i64) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("DELETE FROM tags WHERE id = ?1", params![id])?;
+        Ok(())
+    }
+
+    pub fn find_problem_by_leetcode_id(&self, leetcode_id: i64) -> Result<Option<i64>> {
+        let conn = self.conn.lock().unwrap();
+        match conn.query_row(
+            "SELECT id FROM problems WHERE leetcode_id = ?1",
+            params![leetcode_id],
+            |row| row.get(0),
+        ) {
+            Ok(id) => Ok(Some(id)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    pub fn get_setting(&self, key: &str) -> Result<Option<String>> {
+        let conn = self.conn.lock().unwrap();
+        match conn.query_row(
+            "SELECT value FROM settings WHERE key = ?1",
+            params![key],
+            |row| row.get(0),
+        ) {
+            Ok(v) => Ok(Some(v)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    pub fn set_setting(&self, key: &str, value: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT OR REPLACE INTO settings (key, value) VALUES (?1, ?2)",
+            params![key, value],
+        )?;
+        Ok(())
+    }
+
     fn get_problem_by_conn(conn: &Connection, id: i64) -> Result<Problem> {
         let mut stmt = conn.prepare(
             "SELECT id, leetcode_id, title, title_cn, difficulty, status,
-                    leetcode_url, notes, solution_code, code_language, created_at, updated_at
+                    leetcode_url, notes, content, solution_code, code_language,
+                    created_at, updated_at
              FROM problems WHERE id = ?1"
         )?;
         let mut problem = stmt.query_row(params![id], |row| {
@@ -107,10 +215,11 @@ impl Database {
                 status: row.get(5)?,
                 leetcode_url: row.get(6)?,
                 notes: row.get(7)?,
-                solution_code: row.get(8)?,
-                code_language: row.get(9)?,
-                created_at: row.get(10)?,
-                updated_at: row.get(11)?,
+                content: row.get(8)?,
+                solution_code: row.get(9)?,
+                code_language: row.get(10)?,
+                created_at: row.get(11)?,
+                updated_at: row.get(12)?,
                 tags: Vec::new(),
             })
         })?;
@@ -204,11 +313,51 @@ impl Database {
         Ok(problems)
     }
 
+    pub fn get_problems_count(&self, filters: &ProblemFilters) -> Result<i64> {
+        let conn = self.conn.lock().unwrap();
+        let mut sql = String::from(
+            "SELECT COUNT(DISTINCT p.id) FROM problems p
+             LEFT JOIN problem_tags pt ON p.id = pt.problem_id
+             WHERE 1=1"
+        );
+        let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+
+        if let Some(ref s) = filters.search {
+            if !s.is_empty() {
+                param_values.push(Box::new(format!("%{}%", s)));
+                let idx = param_values.len();
+                sql.push_str(&format!(" AND (p.title LIKE ?{} OR CAST(p.leetcode_id AS TEXT) LIKE ?{})", idx, idx));
+            }
+        }
+        if let Some(ref d) = filters.difficulty {
+            if !d.is_empty() {
+                param_values.push(Box::new(d.clone()));
+                sql.push_str(&format!(" AND p.difficulty = ?{}", param_values.len()));
+            }
+        }
+        if let Some(ref s) = filters.status {
+            if !s.is_empty() {
+                param_values.push(Box::new(s.clone()));
+                sql.push_str(&format!(" AND p.status = ?{}", param_values.len()));
+            }
+        }
+        if let Some(t) = filters.tag_id {
+            if t > 0 {
+                param_values.push(Box::new(t));
+                sql.push_str(&format!(" AND pt.tag_id = ?{}", param_values.len()));
+            }
+        }
+
+        let mut stmt = conn.prepare(&sql)?;
+        let params_refs: Vec<&dyn rusqlite::types::ToSql> = param_values.iter().map(|p| p.as_ref()).collect();
+        stmt.query_row(params_refs.as_slice(), |row| row.get(0))
+    }
+
     pub fn create_problem(&self, data: &CreateProblemDTO) -> Result<Problem> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "INSERT INTO problems (leetcode_id, title, title_cn, difficulty, status, leetcode_url, notes)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            "INSERT INTO problems (leetcode_id, title, title_cn, difficulty, status, leetcode_url, notes, content)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
                 data.leetcode_id,
                 data.title,
@@ -217,6 +366,7 @@ impl Database {
                 data.status.as_deref().unwrap_or("todo"),
                 data.leetcode_url,
                 data.notes,
+                data.content,
             ],
         )?;
         let problem_id = conn.last_insert_rowid();
@@ -265,6 +415,10 @@ impl Database {
             sets.push("notes = ?");
             params_vec.push(Box::new(v.clone()));
         }
+        if let Some(ref v) = data.content {
+            sets.push("content = ?");
+            params_vec.push(Box::new(v.clone()));
+        }
 
         if !sets.is_empty() {
             let sql = format!(
@@ -287,6 +441,15 @@ impl Database {
         }
 
         Self::get_problem_by_conn(&conn, id)
+    }
+
+    pub fn update_problem_content(&self, id: i64, content: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE problems SET content = ?1, updated_at = datetime('now','localtime') WHERE id = ?2",
+            params![content, id],
+        )?;
+        Ok(())
     }
 
     pub fn delete_problem(&self, id: i64) -> Result<()> {
@@ -361,6 +524,84 @@ impl Database {
         })?.filter_map(|r| r.ok()).collect();
         Ok(stats)
     }
+
+    pub fn get_code_snippets(&self, problem_id: i64) -> Result<Vec<CodeSnippet>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, problem_id, language, code, version, created_at
+             FROM code_snippets WHERE problem_id = ?1
+             ORDER BY version DESC"
+        )?;
+        let snippets = stmt.query_map(params![problem_id], |row| {
+            Ok(CodeSnippet {
+                id: row.get(0)?,
+                problem_id: row.get(1)?,
+                language: row.get(2)?,
+                code: row.get(3)?,
+                version: row.get(4)?,
+                created_at: row.get(5)?,
+            })
+        })?.filter_map(|r| r.ok()).collect();
+        Ok(snippets)
+    }
+
+    pub fn save_code_snippet(&self, data: &SaveCodeSnippetDTO) -> Result<CodeSnippet> {
+        let conn = self.conn.lock().unwrap();
+        let existing: Option<(i64, i64)> = conn.query_row(
+            "SELECT id, version FROM code_snippets
+             WHERE problem_id = ?1 AND language = ?2
+             ORDER BY version DESC LIMIT 1",
+            params![data.problem_id, data.language],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        ).ok();
+
+        if let Some((snippet_id, version)) = existing {
+            conn.execute(
+                "UPDATE code_snippets SET code = ?1, version = ?2 WHERE id = ?3",
+                params![data.code, version + 1, snippet_id],
+            )?;
+            let mut stmt = conn.prepare(
+                "SELECT id, problem_id, language, code, version, created_at
+                 FROM code_snippets WHERE id = ?1"
+            )?;
+            stmt.query_row(params![snippet_id], |row| {
+                Ok(CodeSnippet {
+                    id: row.get(0)?,
+                    problem_id: row.get(1)?,
+                    language: row.get(2)?,
+                    code: row.get(3)?,
+                    version: row.get(4)?,
+                    created_at: row.get(5)?,
+                })
+            })
+        } else {
+            conn.execute(
+                "INSERT INTO code_snippets (problem_id, language, code) VALUES (?1, ?2, ?3)",
+                params![data.problem_id, data.language, data.code],
+            )?;
+            let snippet_id = conn.last_insert_rowid();
+            let mut stmt = conn.prepare(
+                "SELECT id, problem_id, language, code, version, created_at
+                 FROM code_snippets WHERE id = ?1"
+            )?;
+            stmt.query_row(params![snippet_id], |row| {
+                Ok(CodeSnippet {
+                    id: row.get(0)?,
+                    problem_id: row.get(1)?,
+                    language: row.get(2)?,
+                    code: row.get(3)?,
+                    version: row.get(4)?,
+                    created_at: row.get(5)?,
+                })
+            })
+        }
+    }
+
+    pub fn delete_code_snippet(&self, id: i64) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("DELETE FROM code_snippets WHERE id = ?1", params![id])?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -385,6 +626,7 @@ mod tests {
             status: None,
             leetcode_url: Some("https://leetcode.cn/problems/two-sum/".into()),
             notes: Some("哈希表解法".into()),
+            content: None,
             tag_ids: tag_ids.clone(),
         };
 
@@ -412,6 +654,7 @@ mod tests {
             status: None,
             leetcode_url: None,
             notes: None,
+            content: None,
             tag_ids: vec![],
         };
         let problem = db.create_problem(&data).unwrap();
@@ -424,6 +667,7 @@ mod tests {
             status: Some("solved".into()),
             leetcode_url: None,
             notes: Some("链表操作".into()),
+            content: None,
             tag_ids: None,
         };
         let updated = db.update_problem(problem.id, &update).unwrap();
@@ -444,6 +688,7 @@ mod tests {
             status: None,
             leetcode_url: None,
             notes: None,
+            content: None,
             tag_ids: vec![],
         };
         let problem = db.create_problem(&data).unwrap();
@@ -464,6 +709,7 @@ mod tests {
                 status: Some(status.into()),
                 leetcode_url: None,
                 notes: None,
+                content: None,
                 tag_ids: vec![],
             }).unwrap();
         };
@@ -497,6 +743,7 @@ mod tests {
             status: Some("solved".into()),
             leetcode_url: None,
             notes: None,
+            content: None,
             tag_ids: vec![],
         }).unwrap();
 
@@ -508,6 +755,7 @@ mod tests {
             status: Some("attempted".into()),
             leetcode_url: None,
             notes: None,
+            content: None,
             tag_ids: vec![],
         }).unwrap();
 
