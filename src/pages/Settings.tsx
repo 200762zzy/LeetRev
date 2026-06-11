@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { invoke } from '@tauri-apps/api/core'
-import { listen, type UnlistenFn } from '@tauri-apps/api/event'
+import { listen } from '@tauri-apps/api/event'
 import { Loader2, RefreshCw, CheckCircle, AlertCircle, ExternalLink, Save, XCircle } from 'lucide-react'
 import type { SyncResult, SyncProgressEvent } from '../types'
 

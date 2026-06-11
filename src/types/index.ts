@@ -138,7 +138,7 @@ export interface ProblemFilters {
   search?: string
   difficulty?: Difficulty | ''
   status?: ProblemStatus | ''
-  tag_id?: number | ''
+  tag_id?: number | '' | null
   sort_by?: 'leetcode_id' | 'title' | 'difficulty' | 'created_at'
   sort_order?: 'asc' | 'desc'
   page?: number
