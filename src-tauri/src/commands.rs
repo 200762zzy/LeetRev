@@ -127,6 +127,102 @@ pub async fn submit_code(
 }
 
 #[tauri::command]
+pub async fn sync_ac_codes(
+    db: State<'_, Database>,
+    cookie: Option<String>,
+    cookie_state: State<'_, LeetcodeCookie>,
+    app_handle: tauri::AppHandle,
+) -> Result<SyncAcCodesResult, String> {
+    let effective_cookie = cookie.or_else(|| {
+        cookie_state.0.lock().ok().and_then(|s| s.clone())
+    }).ok_or_else(|| "请先在设置页面配置 LEETCODE_SESSION cookie".to_string())?;
+
+    let submissions = scraper::fetch_all_accepted_submissions(&effective_cookie).await?;
+
+    let slug_map: std::collections::HashMap<String, i64> = db
+        .get_all_problem_slugs().map_err(|e| e.to_string())?
+        .into_iter()
+        .map(|(id, slug)| (slug, id))
+        .collect();
+
+    let total_found = submissions.len() as i64;
+    let mut saved = 0i64;
+    let mut skipped = 0i64;
+
+    for sub in &submissions {
+        let problem_id = match slug_map.get(&sub.title_slug) {
+            Some(&id) => id,
+            None => {
+                skipped += 1;
+                continue;
+            }
+        };
+
+        let dto = SaveCodeSnippetDTO {
+            problem_id,
+            language: sub.lang.clone(),
+            code: sub.code.clone(),
+        };
+
+        match db.save_code_snippet(&dto) {
+            Ok(_) => saved += 1,
+            Err(_) => skipped += 1,
+        }
+
+        let _ = app_handle.emit("sync-ac-codes-progress", serde_json::json!({
+            "current": saved + skipped,
+            "total": total_found,
+        }));
+    }
+
+    Ok(SyncAcCodesResult { total_found, saved, skipped })
+}
+
+#[tauri::command]
+pub async fn get_last_accepted_submission(
+    db: State<'_, Database>,
+    leetcode_id: i64,
+) -> Result<Option<LastSubmission>, String> {
+    let cookie = db
+        .get_setting("leetcode_session")
+        .ok()
+        .flatten()
+        .ok_or_else(|| "请先在设置页面配置 LEETCODE_SESSION cookie".to_string())?;
+    scraper::fetch_last_accepted_submission(leetcode_id, &cookie).await
+}
+
+#[tauri::command]
+pub fn refresh_submission_stats(
+    db: State<Database>,
+) -> Result<RefreshStatsResult, String> {
+    let processed = db
+        .compute_submission_stats()
+        .map_err(|e| e.to_string())?;
+    Ok(RefreshStatsResult { processed })
+}
+
+#[tauri::command]
+pub fn get_review_queue(db: State<Database>) -> Result<Vec<Problem>, String> {
+    db.get_review_queue().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn record_review(db: State<Database>, problem_id: i64, confidence: String) -> Result<(), String> {
+    db.record_review(problem_id, &confidence).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn get_review_stats(db: State<Database>) -> Result<ReviewStats, String> {
+    let (total_reviewed, today_reviewed, due_count) = db.get_review_stats().map_err(|e| e.to_string())?;
+    Ok(ReviewStats { total_reviewed, today_reviewed, due_count })
+}
+
+#[tauri::command]
+pub fn get_random_problem(db: State<Database>) -> Result<Option<Problem>, String> {
+    db.get_random_problem().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub fn open_leetcode_login() -> Result<(), String> {
     let url = "https://leetcode.cn/accounts/login/";
     println!("[leetcode-login] 在系统浏览器中打开: {}", url);
@@ -288,6 +384,9 @@ pub async fn sync_leetcode_progress(
             status: "done".into(),
         });
     }
+
+    // Compute submission stats from synced data
+    let _ = db.compute_submission_stats();
 
     Ok(SyncResult { total, imported, updated, failed, failed_items })
 }

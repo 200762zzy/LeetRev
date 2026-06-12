@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useLocation } from 'react-router-dom'
 import { invoke } from '@tauri-apps/api/core'
 import { Plus, Search, ArrowUpDown, Trash2, Edit3, ChevronLeft, ChevronRight } from 'lucide-react'
 import type { Problem, ProblemFilters, Tag } from '../types'
@@ -7,6 +7,7 @@ import { difficultyColor, statusColor, statusLabel } from '../lib/utils'
 
 export function Problems() {
   const navigate = useNavigate()
+  const location = useLocation()
   const [problems, setProblems] = useState<Problem[]>([])
   const [totalCount, setTotalCount] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -15,7 +16,7 @@ export function Problems() {
     search: '',
     difficulty: '',
     status: '',
-    tag_id: null,
+    tag_id: (location.state as { initialTagId?: number } | null)?.initialTagId ?? null,
     sort_by: 'leetcode_id',
     sort_order: 'desc',
     page: 1,

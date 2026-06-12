@@ -1,13 +1,18 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { invoke } from '@tauri-apps/api/core'
-import { ArrowLeft, Copy, Check, Trash2, Loader2, ExternalLink, Save, RefreshCw, Play, AlertCircle, XCircle, CheckCircle, Bug } from 'lucide-react'
+import { ArrowLeft, Copy, Check, Trash2, Loader2, ExternalLink, Save, RefreshCw, Play, AlertCircle, XCircle, CheckCircle, Bug, History } from 'lucide-react'
 import { writeText } from '@tauri-apps/plugin-clipboard-manager'
 import DOMPurify from 'dompurify'
 import type { Problem, CodeSnippet, SaveCodeSnippetDTO, CodeLanguage, SubmissionResult, CodeTemplate } from '../types'
 import { LANGUAGES } from '../types'
 import { difficultyColor, statusColor, statusLabel } from '../lib/utils'
 import { CodeEditor } from '../components/CodeEditor'
+
+interface LastSubmission {
+  code: string
+  lang: string
+}
 
 export function ProblemDetail() {
   const navigate = useNavigate()
@@ -23,6 +28,8 @@ export function ProblemDetail() {
   const [templates, setTemplates] = useState<CodeTemplate[]>([])
   const [submitting, setSubmitting] = useState(false)
   const [submitResult, setSubmitResult] = useState<SubmissionResult | null>(null)
+  const [lastSubmission, setLastSubmission] = useState<LastSubmission | null>(null)
+  const [fetchingSubmission, setFetchingSubmission] = useState(false)
 
   useEffect(() => {
     if (!id) return
@@ -40,8 +47,30 @@ export function ProblemDetail() {
         }
         if (p.leetcode_id) {
           invoke<CodeTemplate[]>('fetch_code_templates', { leetcodeId: p.leetcode_id })
-            .then(setTemplates)
+            .then((tpls) => {
+              setTemplates(tpls)
+              if (snips.length === 0 && tpls.length > 0) {
+                const defaultLang = LANGUAGES[0]
+                const tpl = tpls.find(t => t.lang === defaultLang) ?? tpls[0]
+                setLanguage(tpl.lang as CodeLanguage)
+                setCode(tpl.code)
+              }
+            })
             .catch(() => {})
+
+          setFetchingSubmission(true)
+          invoke<LastSubmission | null>('get_last_accepted_submission', { leetcodeId: p.leetcode_id })
+            .then((sub) => {
+              if (sub) {
+                setLastSubmission(sub)
+                if (snips.length === 0) {
+                  setLanguage(sub.lang as CodeLanguage)
+                  setCode(sub.code)
+                }
+              }
+            })
+            .catch(() => {})
+            .finally(() => setFetchingSubmission(false))
         }
       })
       .catch(console.error)
@@ -213,7 +242,7 @@ export function ProblemDetail() {
         </div>
       </div>
 
-      <div className="grid grid-cols-3 gap-6">
+      <div className="grid grid-cols-5 gap-6">
         <div className="col-span-2 space-y-4">
           <div className="card">
             <div className="mb-3 flex items-center justify-between">
@@ -244,7 +273,17 @@ export function ProblemDetail() {
               </p>
             )}
           </div>
-          <div className="card">
+
+          {problem.notes && (
+            <div className="card">
+              <h3 className="mb-2 text-sm font-semibold text-zinc-900">解题思路</h3>
+              <p className="whitespace-pre-wrap text-sm text-zinc-600">{problem.notes}</p>
+            </div>
+          )}
+        </div>
+
+        <div className="col-span-3 space-y-4">
+          <div className="card flex flex-col min-h-[500px]">
             <div className="mb-3 flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <select
@@ -297,6 +336,33 @@ export function ProblemDetail() {
               editable
             />
           </div>
+
+          {lastSubmission && !submitResult && (
+            <div className="flex items-center gap-2 rounded-lg border border-sky-200 bg-sky-50 px-4 py-2.5 text-sm">
+              <History className="h-4 w-4 text-sky-500" />
+              <span className="text-sky-700">
+                已加载你之前的解答（{lastSubmission.lang}）
+              </span>
+              <button
+                className="ml-auto text-xs text-sky-500 underline hover:text-sky-700"
+                onClick={() => {
+                  const tpl = templates.find((t) => t.lang === language)
+                  if (tpl) setCode(tpl.code)
+                  else setCode('')
+                  setLastSubmission(null)
+                }}
+              >
+                重置为模板
+              </button>
+            </div>
+          )}
+
+          {fetchingSubmission && (
+            <div className="flex items-center gap-2 text-sm text-zinc-400">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              正在查找历史解答...
+            </div>
+          )}
 
           {submitResult && (
             <div className={`rounded-lg border p-4 text-sm ${resultColor(submitResult.status)}`}>
@@ -366,16 +432,12 @@ export function ProblemDetail() {
               )}
             </div>
           )}
-
-          {problem.notes && (
-            <div className="card">
-              <h3 className="mb-2 text-sm font-semibold text-zinc-900">解题思路</h3>
-              <p className="whitespace-pre-wrap text-sm text-zinc-600">{problem.notes}</p>
-            </div>
-          )}
         </div>
 
-        <div className="space-y-4">
+      </div>
+
+      <div className="grid grid-cols-5 gap-6">
+        <div className="col-span-2">
           <div className="card">
             <h3 className="mb-3 text-sm font-semibold text-zinc-900">标签</h3>
             <div className="flex flex-wrap gap-1.5">
@@ -389,36 +451,32 @@ export function ProblemDetail() {
               ))}
             </div>
           </div>
+        </div>
 
+        <div className="col-span-3">
           {snippets.length > 0 && (
             <div className="card">
               <h3 className="mb-3 text-sm font-semibold text-zinc-900">代码版本</h3>
-              <div className="space-y-2">
+              <div className="flex flex-wrap gap-2">
                 {snippets.map((s) => (
                   <button
                     key={s.id}
                     onClick={() => switchSnippet(s)}
-                    className={`w-full flex items-center justify-between rounded-lg border px-3 py-2 text-left text-sm transition-colors ${
+                    className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm transition-colors ${
                       s.language === language && s.code === code
                         ? 'border-primary-300 bg-primary-50'
                         : 'border-zinc-200 hover:bg-zinc-50'
                     }`}
                   >
-                    <div>
-                      <span className="font-medium text-zinc-900">{s.language}</span>
-                      <span className="ml-2 text-xs text-zinc-400">v{s.version}</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs text-zinc-400">
-                        {s.created_at.slice(0, 10)}
-                      </span>
-                      <button
-                        onClick={(e) => { e.stopPropagation(); handleDelete(s.id) }}
-                        className="text-zinc-400 hover:text-red-500"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
+                    <span className="font-medium text-zinc-900">{s.language}</span>
+                    <span className="text-xs text-zinc-400">v{s.version}</span>
+                    <span className="text-xs text-zinc-400">{s.created_at.slice(0, 10)}</span>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); handleDelete(s.id) }}
+                      className="ml-1 text-zinc-400 hover:text-red-500"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
                   </button>
                 ))}
               </div>

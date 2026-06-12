@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
-import { Loader2, RefreshCw, CheckCircle, AlertCircle, ExternalLink, Save, XCircle } from 'lucide-react'
-import type { SyncResult, SyncProgressEvent } from '../types'
+import { Loader2, RefreshCw, CheckCircle, AlertCircle, ExternalLink, Save, XCircle, BarChart3, Code2 } from 'lucide-react'
+import type { SyncResult, SyncProgressEvent, SyncAcCodesResult } from '../types'
 
 export function Settings() {
   const [cookie, setCookie] = useState('')
@@ -11,6 +11,11 @@ export function Settings() {
   const [progress, setProgress] = useState<SyncProgressEvent | null>(null)
   const [saved, setSaved] = useState(false)
   const [showFailed, setShowFailed] = useState(false)
+  const [refreshingStats, setRefreshingStats] = useState(false)
+  const [statsResult, setStatsResult] = useState<string | null>(null)
+  const [syncingCodes, setSyncingCodes] = useState(false)
+  const [codesResult, setCodesResult] = useState<SyncAcCodesResult | null>(null)
+  const [codesProgress, setCodesProgress] = useState<{ current: number; total: number } | null>(null)
 
   useEffect(() => {
     invoke<string | null>('get_setting', { key: 'leetcode_session' }).then((v) => {
@@ -49,6 +54,26 @@ export function Settings() {
     unlisten()
     setSyncing(false)
     setProgress(null)
+  }
+
+  const handleSyncCodes = async () => {
+    setSyncingCodes(true)
+    setCodesResult(null)
+    setCodesProgress(null)
+
+    const unlisten = await listen<{ current: number; total: number }>('sync-ac-codes-progress', (event) => {
+      setCodesProgress(event.payload)
+    })
+
+    try {
+      const res = await invoke<SyncAcCodesResult>('sync_ac_codes', { cookie: cookie || null })
+      setCodesResult(res)
+    } catch (e) {
+      alert('同步代码失败：' + String(e))
+    }
+    unlisten()
+    setSyncingCodes(false)
+    setCodesProgress(null)
   }
 
   const progressPercent = progress && progress.total > 0
@@ -125,10 +150,66 @@ export function Settings() {
           </div>
         )}
 
-        {result && (
-          <div className={`rounded-lg border p-4 text-sm ${
-            result.failed > 0 ? 'border-amber-200 bg-amber-50' : 'border-emerald-200 bg-emerald-50'
-          }`}>
+          <div className="flex items-center gap-3 border-t border-zinc-100 pt-4">
+            <button
+              className="btn-secondary"
+              onClick={async () => {
+                setRefreshingStats(true)
+                setStatsResult(null)
+                try {
+                  const res = await invoke<{ processed: number }>('refresh_submission_stats')
+                  setStatsResult(`已处理 ${res.processed} 道题目的提交统计`)
+                } catch (e) {
+                  setStatsResult('失败：' + String(e))
+                }
+                setRefreshingStats(false)
+              }}
+              disabled={refreshingStats}
+            >
+              {refreshingStats ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <BarChart3 className="h-4 w-4" />
+              )}
+              {refreshingStats ? '聚合中...' : '刷新提交统计'}
+            </button>
+            {statsResult && (
+              <span className={`text-xs ${statsResult.startsWith('失败') ? 'text-red-500' : 'text-emerald-600'}`}>
+                {statsResult}
+              </span>
+            )}
+          </div>
+
+          <div className="flex items-center gap-3 border-t border-zinc-100 pt-4">
+            <button
+              className="btn-secondary"
+              onClick={handleSyncCodes}
+              disabled={syncingCodes}
+            >
+              {syncingCodes ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Code2 className="h-4 w-4" />
+              )}
+              {syncingCodes ? '同步中...' : '同步历史 AC 代码'}
+            </button>
+            {syncingCodes && codesProgress && (
+              <span className="text-xs text-zinc-500">
+                {codesProgress.current}/{codesProgress.total}
+              </span>
+            )}
+            {codesResult && (
+              <span className="text-xs text-emerald-600">
+                找到 {codesResult.total_found} 条，已保存 {codesResult.saved} 条
+                {codesResult.skipped > 0 && `，跳过 ${codesResult.skipped} 条（未匹配本地题目）`}
+              </span>
+            )}
+          </div>
+
+          {result && (
+            <div className={`rounded-lg border p-4 text-sm ${
+              result.failed > 0 ? 'border-amber-200 bg-amber-50' : 'border-emerald-200 bg-emerald-50'
+            }`}>
             <div className="flex items-center gap-2 font-medium">
               {result.failed > 0 ? (
                 <AlertCircle className="h-4 w-4 text-amber-500" />

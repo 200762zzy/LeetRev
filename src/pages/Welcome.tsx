@@ -1,22 +1,35 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { invoke } from '@tauri-apps/api/core'
 import ReactECharts from 'echarts-for-react'
-import { BookOpen, TrendingUp, Target, Plus, AlertTriangle } from 'lucide-react'
-import type { Stats, TagStats } from '../types'
+import { BookOpen, TrendingUp, Target, Plus, AlertTriangle, Shuffle } from 'lucide-react'
+import type { Stats, TagStats, ReviewStats } from '../types'
 
 export function Welcome() {
   const navigate = useNavigate()
   const [stats, setStats] = useState<Stats | null>(null)
   const [tagStats, setTagStats] = useState<TagStats[]>([])
+  const [reviewStats, setReviewStats] = useState<ReviewStats | null>(null)
 
   useEffect(() => {
     invoke<Stats>('get_stats').then(setStats).catch(() => {})
     invoke<TagStats[]>('get_tag_stats').then(setTagStats).catch(() => {})
+    invoke<ReviewStats>('get_review_stats').then(setReviewStats).catch(() => {})
   }, [])
 
   const passRate =
     stats && stats.total > 0 ? Math.round((stats.solved / stats.total) * 100) : 0
+
+  const handleRandom = useCallback(async () => {
+    try {
+      const p = await invoke<{ id: number } | null>('get_random_problem')
+      if (p) navigate(`/problems/${p.id}`)
+    } catch (_) {}
+  }, [navigate])
+
+  const handleStartReview = useCallback(() => {
+    navigate('/review')
+  }, [navigate])
 
   const cards = [
     {
@@ -39,9 +52,9 @@ export function Welcome() {
     },
     {
       label: '待复习',
-      value: stats?.revisit ?? 0,
+      value: reviewStats?.due_count ?? 0,
       icon: Target,
-      color: 'bg-amber-50 text-amber-600',
+      color: reviewStats && reviewStats.due_count > 0 ? 'bg-amber-50 text-amber-600' : 'bg-emerald-50 text-emerald-600',
     },
   ]
 
@@ -108,6 +121,32 @@ export function Welcome() {
         ))}
       </div>
 
+      {reviewStats && reviewStats.due_count > 0 && (
+        <div className="card flex items-center justify-between border-l-4 border-l-amber-400 bg-amber-50/30">
+          <div className="flex items-center gap-3">
+            <Target className="h-5 w-5 text-amber-500" />
+            <div>
+              <p className="text-sm font-medium text-zinc-900">每日复习提醒</p>
+              <p className="text-xs text-zinc-500">今天有 {reviewStats.due_count} 道题目待复习，已复习 {reviewStats.today_reviewed} 题</p>
+            </div>
+          </div>
+          <button className="btn-primary" onClick={handleStartReview}>开始复习</button>
+        </div>
+      )}
+
+      <div className="flex items-center gap-3">
+        {stats && stats.total > 0 && (
+          <button className="btn-secondary" onClick={handleRandom}>
+            <Shuffle className="h-4 w-4" /> 随机一题
+          </button>
+        )}
+        {reviewStats && reviewStats.total_reviewed > 0 && (
+          <button className="btn-secondary" onClick={handleStartReview}>
+            <Target className="h-4 w-4" /> 复习模式
+          </button>
+        )}
+      </div>
+
       {(!stats || stats.total === 0) ? (
         <div className="card py-16 text-center">
           <BookOpen className="mx-auto h-12 w-12 text-zinc-300" />
@@ -155,7 +194,7 @@ export function Welcome() {
                   </thead>
                   <tbody className="divide-y divide-zinc-100">
                     {weakTags.map((t) => (
-                      <tr key={t.tag_id} className="hover:bg-zinc-50/50">
+                      <tr key={t.tag_id} className="cursor-pointer hover:bg-zinc-100" onClick={() => navigate('/problems', { state: { initialTagId: t.tag_id } })}>
                         <td className="px-4 py-2.5 font-medium text-zinc-900">{t.tag_name}</td>
                         <td className="px-4 py-2.5 text-center text-zinc-600">{t.total}</td>
                         <td className="px-4 py-2.5 text-center text-zinc-600">{t.solved}</td>

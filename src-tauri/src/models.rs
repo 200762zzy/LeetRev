@@ -151,6 +151,38 @@ pub struct SubmissionResult {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LastSubmission {
+    pub code: String,
+    pub lang: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubmissionStat {
+    pub title_slug: String,
+    pub total_tries: i64,
+    pub total_accepted: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RefreshStatsResult {
+    pub processed: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReviewStats {
+    pub total_reviewed: i64,
+    pub today_reviewed: i64,
+    pub due_count: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncAcCodesResult {
+    pub total_found: i64,
+    pub saved: i64,
+    pub skipped: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProblemFilters {
     pub search: Option<String>,
     pub difficulty: Option<String>,

@@ -412,8 +412,32 @@ fn map_language(frontend_name: &str) -> Result<String, String> {
 
 static CSRF_TOKEN: Mutex<Option<String>> = Mutex::new(None);
 
+fn extract_csrftoken_from_headers(headers: &reqwest::header::HeaderMap) -> Option<String> {
+    // Try every Set-Cookie header
+    for header in headers.get_all("set-cookie") {
+        if let Ok(s) = header.to_str() {
+            for part in s.split(';') {
+                let trimmed = part.trim();
+            if let Some(val) = trimmed.strip_prefix("csrftoken=") {
+                return Some(val.to_string());
+            }
+            }
+        }
+    }
+    // Try x-csrf-token response header
+    if let Some(val) = headers.get("x-csrf-token").and_then(|v| v.to_str().ok()) {
+        return Some(val.to_string());
+    }
+    if let Some(val) = headers.get("x-csrftoken").and_then(|v| v.to_str().ok()) {
+        return Some(val.to_string());
+    }
+    None
+}
+
 async fn fetch_csrf_token(session_cookie: &str) -> Result<String, String> {
     let client = new_client();
+
+    // Try 1: GET homepage
     let resp = client
         .get("https://leetcode.cn/")
         .header("Cookie", session_cookie)
@@ -421,20 +445,46 @@ async fn fetch_csrf_token(session_cookie: &str) -> Result<String, String> {
         .await
         .map_err(|e| format!("获取 csrf token 失败: {}", e))?;
 
-    let token = resp
-        .headers()
-        .get("set-cookie")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| {
-            s.split(';')
-                .find(|part| part.trim().starts_with("csrftoken="))
-                .map(|part| part.trim().trim_start_matches("csrftoken=").to_string())
-        })
-        .ok_or_else(|| "无法从响应中提取 csrftoken".to_string())?;
+    if let Some(token) = extract_csrftoken_from_headers(resp.headers()) {
+        let mut cache = CSRF_TOKEN.lock().map_err(|e| format!("csrf 缓存锁错误: {}", e))?;
+        *cache = Some(token.clone());
+        return Ok(token);
+    }
 
-    let mut cache = CSRF_TOKEN.lock().map_err(|e| format!("csrf 缓存锁错误: {}", e))?;
-    *cache = Some(token.clone());
-    Ok(token)
+    // Try 2: GET /api/problems/all/ (known to work with session cookie)
+    let resp = client
+        .get("https://leetcode.cn/api/problems/all/")
+        .header("Cookie", session_cookie)
+        .send()
+        .await
+        .map_err(|e| format!("获取 csrf token 失败(2): {}", e))?;
+
+    if let Some(token) = extract_csrftoken_from_headers(resp.headers()) {
+        let mut cache = CSRF_TOKEN.lock().map_err(|e| format!("csrf 缓存锁错误: {}", e))?;
+        *cache = Some(token.clone());
+        return Ok(token);
+    }
+
+    // Try 3: POST /graphql/ with a simple query
+    let query = serde_json::json!({
+        "query": "{ userStatus { userId } }",
+        "operationName": "userStatus"
+    });
+    let resp = client
+        .post("https://leetcode.cn/graphql/")
+        .header("Cookie", session_cookie)
+        .json(&query)
+        .send()
+        .await
+        .map_err(|e| format!("获取 csrf token 失败(3): {}", e))?;
+
+    if let Some(token) = extract_csrftoken_from_headers(resp.headers()) {
+        let mut cache = CSRF_TOKEN.lock().map_err(|e| format!("csrf 缓存锁错误: {}", e))?;
+        *cache = Some(token.clone());
+        return Ok(token);
+    }
+
+    Err("无法从响应中提取 csrftoken（尝试了首页 /api/problems/all/ /graphql/ 三种方式）".into())
 }
 
 fn get_cached_csrf_token() -> Option<String> {
@@ -464,7 +514,7 @@ async fn ensure_cookies(cookie_str: &str) -> Result<(String, String), String> {
     };
 
     let mut final_cookies = full_cookies;
-    if !final_cookies.contains("csrftoken") {
+    if !final_cookies.contains("csrftoken=") {
         final_cookies.push_str(&format!("; csrftoken={}", csrf));
     }
 
@@ -598,6 +648,391 @@ async fn poll_submission(
     }
 
     Err("判题超时（超过 60 秒）".into())
+}
+
+fn map_lang_backend_to_frontend(backend: &str) -> Option<String> {
+    match backend {
+        "python3" => Some("Python".into()),
+        "java" => Some("Java".into()),
+        "cpp" => Some("C++".into()),
+        "golang" => Some("Go".into()),
+        "rust" => Some("Rust".into()),
+        "javascript" => Some("JavaScript".into()),
+        "typescript" => Some("TypeScript".into()),
+        "csharp" => Some("C#".into()),
+        "swift" => Some("Swift".into()),
+        "kotlin" => Some("Kotlin".into()),
+        "ruby" => Some("Ruby".into()),
+        "php" => Some("PHP".into()),
+        "scala" => Some("Scala".into()),
+        "dart" => Some("Dart".into()),
+        _ => None,
+    }
+}
+
+
+
+pub struct FetchedAcceptedSubmission {
+    pub title_slug: String,
+    pub code: String,
+    pub lang: String,
+}
+
+pub async fn fetch_all_accepted_submissions(
+    cookie_str: &str,
+) -> Result<Vec<FetchedAcceptedSubmission>, String> {
+    let cookies = parse_cookies(cookie_str);
+    if cookies.is_empty() {
+        return Err("缺少 LEETCODE_SESSION cookie".into());
+    }
+
+    let client = new_client();
+    let mut results = Vec::new();
+
+    // Method 1: REST API with browser-like headers (may need CSRF)
+    let (full_cookies, csrf_token) = match ensure_cookies(cookie_str).await {
+        Ok(v) => (Some(v.0), Some(v.1)),
+        Err(_) => (None, None),
+    };
+    let request_cookies = full_cookies.as_deref().unwrap_or(&cookies);
+
+    for page in 0..5 {
+        let offset = page * 20;
+        let url = format!("https://leetcode.cn/api/submissions/?offset={}&limit=20", offset);
+
+        let mut req = client
+            .get(&url)
+            .header("Cookie", request_cookies)
+            .header("Referer", "https://leetcode.cn/")
+            .header("Origin", "https://leetcode.cn")
+            .header("Accept", "application/json, text/plain, */*");
+
+        if let Some(ref csrf) = csrf_token {
+            req = req.header("X-Csrftoken", csrf);
+        }
+
+        let resp = match req.send().await {
+            Ok(r) if r.status().is_success() => r,
+            Ok(r) => {
+                let status = r.status();
+                let _ = r.text().await;
+                eprintln!("[scraper] 提交记录 API 返回 {}，尝试其它方式", status);
+                break;
+            }
+            Err(e) => {
+                eprintln!("[scraper] 提交记录 API 请求失败: {}", e);
+                break;
+            }
+        };
+
+        let data: serde_json::Value = match resp.json().await {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("[scraper] 解析提交记录响应失败: {}", e);
+                break;
+            }
+        };
+
+        let dump = match data["submissions_dump"].as_array() {
+            Some(d) => d,
+            _ => {
+                eprintln!("[scraper] 提交记录响应格式异常，缺少 submissions_dump 字段");
+                break;
+            }
+        };
+
+        for sub in dump {
+            if sub["status_display"].as_str().unwrap_or("") != "Accepted" {
+                continue;
+            }
+            let slug = match sub["title_slug"].as_str() {
+                Some(s) => s,
+                _ => continue,
+            };
+            let code = match sub["code"].as_str() {
+                Some(c) => c.trim(),
+                _ => continue,
+            };
+            if code.is_empty() {
+                continue;
+            }
+            let lang = sub["lang"].as_str().unwrap_or("python3");
+            let frontend = map_lang_backend_to_frontend(lang)
+                .unwrap_or_else(|| "Python".into());
+
+            results.push(FetchedAcceptedSubmission {
+                title_slug: slug.to_string(),
+                code: code.to_string(),
+                lang: frontend,
+            });
+        }
+
+        if !data["has_next"].as_bool().unwrap_or(false) {
+            break;
+        }
+    }
+
+    if !results.is_empty() {
+        return Ok(results);
+    }
+
+    // Method 2: GraphQL submissionList query with CSRF
+    if let (Some(ref fc), Some(ref csrf)) = (full_cookies, csrf_token) {
+        let list_query = serde_json::json!({
+            "query": r#"
+                query submissions($offset: Int!, $limit: Int!) {
+                    submissionList(offset: $offset, limit: $limit) {
+                        submissions {
+                            id
+                            titleSlug
+                            statusDisplay
+                            lang
+                            code
+                        }
+                    }
+                }
+            "#,
+            "variables": { "offset": 0, "limit": 40 },
+            "operationName": "submissions"
+        });
+
+        if let Ok(resp) = client
+            .post("https://leetcode.cn/graphql/")
+            .header("Cookie", fc.as_str())
+            .header("X-Csrftoken", csrf.as_str())
+            .header("Referer", "https://leetcode.cn/")
+            .header("Origin", "https://leetcode.cn")
+            .json(&list_query)
+            .send()
+            .await
+        {
+            if resp.status().is_success() {
+                if let Ok(data) = resp.json::<serde_json::Value>().await {
+                    if let Some(subs) = data["data"]["submissionList"]["submissions"].as_array() {
+                        for sub in subs {
+                            if sub["statusDisplay"].as_str().unwrap_or("") != "Accepted" {
+                                continue;
+                            }
+                            let slug = match sub["titleSlug"].as_str() {
+                                Some(s) => s,
+                                _ => continue,
+                            };
+                            let code = match sub["code"].as_str() {
+                                Some(c) => c.trim(),
+                                _ => continue,
+                            };
+                            if code.is_empty() {
+                                continue;
+                            }
+                            let lang = sub["lang"].as_str().unwrap_or("python3");
+                            let frontend = map_lang_backend_to_frontend(lang)
+                                .unwrap_or_else(|| "Python".into());
+
+                            results.push(FetchedAcceptedSubmission {
+                                title_slug: slug.to_string(),
+                                code: code.to_string(),
+                                lang: frontend,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(results)
+}
+
+pub async fn fetch_last_accepted_submission(
+    leetcode_id: i64,
+    cookie_str: &str,
+) -> Result<Option<super::models::LastSubmission>, String> {
+    let cache = get_cache().await?;
+    let entry = cache
+        .get(&leetcode_id)
+        .ok_or_else(|| format!("题号 #{} 不在缓存中", leetcode_id))?;
+    let slug = &entry.title_slug;
+
+    let cookies = parse_cookies(cookie_str);
+    if cookies.is_empty() {
+        return Err("缺少 LEETCODE_SESSION cookie，请在设置中配置".into());
+    }
+
+    let client = new_client();
+
+    // Method 1: REST API /api/submissions/ (works with just session cookie, same as sync)
+    for page in 0..3 {
+        let offset = page * 20;
+        let url = format!("https://leetcode.cn/api/submissions/?offset={}&limit=20", offset);
+        let resp = match client
+            .get(&url)
+            .header("Cookie", &cookies)
+            .send()
+            .await
+        {
+            Ok(r) if r.status().is_success() => r,
+            _ => break, // REST API not available
+        };
+
+        let data: serde_json::Value = match resp.json().await {
+            Ok(v) => v,
+            _ => break,
+        };
+
+        let dump = match data["submissions_dump"].as_array() {
+            Some(d) => d,
+            _ => break,
+        };
+
+        for sub in dump {
+            if sub["title_slug"].as_str().unwrap_or("") != slug {
+                continue;
+            }
+            if sub["status_display"].as_str().unwrap_or("") != "Accepted" {
+                continue;
+            }
+            if let Some(code) = sub["code"].as_str() {
+                let code = code.trim();
+                if !code.is_empty() {
+                    let lang = sub["lang"].as_str().unwrap_or("python3");
+                    let frontend = map_lang_backend_to_frontend(lang)
+                        .unwrap_or_else(|| "Python".into());
+                    return Ok(Some(super::models::LastSubmission {
+                        code: code.to_string(),
+                        lang: frontend,
+                    }));
+                }
+            }
+        }
+
+        if !data["has_next"].as_bool().unwrap_or(false) {
+            break;
+        }
+    }
+
+    // Method 2: GraphQL with CSRF (fallback)
+    if let Ok((full_cookies, csrf)) = ensure_cookies(cookie_str).await {
+        // Get username via GraphQL
+        let username = {
+            let status_query = serde_json::json!({
+                "query": r#"
+                    query userStatus {
+                        userStatus {
+                            username
+                            isSignedIn
+                        }
+                    }
+                "#,
+                "operationName": "userStatus"
+            });
+
+            match client
+                .post("https://leetcode.cn/graphql/")
+                .header("Cookie", &full_cookies)
+                .header("X-Csrftoken", &csrf)
+                .json(&status_query)
+                .send()
+                .await
+            {
+                Ok(r) => match r.json::<serde_json::Value>().await {
+                    Ok(v) => v["data"]["userStatus"]["username"]
+                        .as_str()
+                        .filter(|u| !u.is_empty())
+                        .map(String::from),
+                    _ => None,
+                },
+                _ => None,
+            }
+        };
+
+        if let Some(ref username) = username {
+            // Get recent AC submission list
+            let list_query = serde_json::json!({
+                "query": r#"
+                    query recentAcSubmissions($username: String!, $limit: Int!) {
+                        recentAcSubmissionList(username: $username, limit: $limit) {
+                            id
+                            titleSlug
+                        }
+                    }
+                "#,
+                "variables": { "username": username, "limit": 50 },
+                "operationName": "recentAcSubmissions"
+            });
+
+            let submissions = match client
+                .post("https://leetcode.cn/graphql/")
+                .header("Cookie", &full_cookies)
+                .header("X-Csrftoken", &csrf)
+                .json(&list_query)
+                .send()
+                .await
+            {
+                Ok(r) => match r.json::<serde_json::Value>().await {
+                    Ok(v) => v["data"]["recentAcSubmissionList"].as_array().cloned(),
+                    _ => None,
+                },
+                _ => None,
+            };
+
+            if let Some(submissions) = submissions {
+                if let Some(matching) = submissions.iter().find(|sub| {
+                    sub["titleSlug"].as_str().unwrap_or("") == slug
+                }) {
+                    let sub_id = matching["id"].as_i64().or_else(|| {
+                        matching["id"].as_str().and_then(|s| s.parse::<i64>().ok())
+                    });
+
+                    if let Some(sid) = sub_id {
+                        // Get submission details
+                        let detail_query = serde_json::json!({
+                            "query": r#"
+                                query submissionDetails($submissionId: Int!) {
+                                    submissionDetails(submissionId: $submissionId) {
+                                        code
+                                        lang {
+                                            name
+                                            verboseName
+                                        }
+                                    }
+                                }
+                            "#,
+                            "variables": { "submissionId": sid },
+                            "operationName": "submissionDetails"
+                        });
+
+                        if let Ok(r) = client
+                            .post("https://leetcode.cn/graphql/")
+                            .header("Cookie", &full_cookies)
+                            .header("X-Csrftoken", &csrf)
+                            .json(&detail_query)
+                            .send()
+                            .await
+                        {
+                            if let Ok(data) = r.json::<serde_json::Value>().await {
+                                if let Some(code) = data["data"]["submissionDetails"]["code"].as_str() {
+                                    let code = code.trim();
+                                    if !code.is_empty() {
+                                        let lang_name = data["data"]["submissionDetails"]["lang"]["name"]
+                                            .as_str()
+                                            .unwrap_or("python3");
+                                        let frontend = map_lang_backend_to_frontend(lang_name)
+                                            .unwrap_or_else(|| "Python".into());
+                                        return Ok(Some(super::models::LastSubmission {
+                                            code: code.to_string(),
+                                            lang: frontend,
+                                        }));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(None)
 }
 
 

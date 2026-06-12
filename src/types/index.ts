@@ -121,6 +121,18 @@ export interface CodeTemplate {
   code: string
 }
 
+export interface ReviewStats {
+  total_reviewed: number
+  today_reviewed: number
+  due_count: number
+}
+
+export interface SyncAcCodesResult {
+  total_found: number
+  saved: number
+  skipped: number
+}
+
 export interface SubmissionResult {
   status: string
   passed: number

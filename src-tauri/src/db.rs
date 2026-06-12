@@ -103,6 +103,56 @@ impl Database {
             );"
         )?;
 
+        // Migration: reviews table
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS reviews (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                problem_id INTEGER NOT NULL REFERENCES problems(id) ON DELETE CASCADE,
+                confidence TEXT NOT NULL CHECK(confidence IN ('easy','medium','hard')),
+                reviewed_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+            );"
+        )?;
+
+        // Migration: submission_stats table
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS submission_stats (
+                problem_id INTEGER PRIMARY KEY REFERENCES problems(id) ON DELETE CASCADE,
+                total_tries INTEGER NOT NULL DEFAULT 0,
+                total_accepted INTEGER NOT NULL DEFAULT 0,
+                updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+            );"
+        )?;
+
+        // Migration: SM-2 columns for reviews
+        for alter in &[
+            "ALTER TABLE reviews ADD COLUMN ease_factor REAL DEFAULT 2.5",
+            "ALTER TABLE reviews ADD COLUMN interval_days INTEGER DEFAULT 0",
+            "ALTER TABLE reviews ADD COLUMN repetitions INTEGER DEFAULT 0",
+            "ALTER TABLE reviews ADD COLUMN next_review TEXT DEFAULT ''",
+        ] {
+            let _ = conn.execute(alter, []);
+        }
+
+        // Backfill next_review for existing pre-SM-2 reviews
+        let _ = conn.execute(
+            "UPDATE reviews SET
+                ease_factor = CASE confidence WHEN 'easy' THEN 2.6 WHEN 'medium' THEN 2.5 ELSE 1.3 END,
+                interval_days = CASE confidence WHEN 'easy' THEN 7 WHEN 'medium' THEN 3 ELSE 1 END,
+                repetitions = CASE confidence WHEN 'easy' THEN 2 WHEN 'medium' THEN 1 ELSE 0 END,
+                next_review = datetime(reviewed_at, '+' ||
+                    CASE confidence WHEN 'easy' THEN 7 WHEN 'medium' THEN 3 ELSE 1 END || ' days')
+             WHERE next_review = ''",
+            [],
+        );
+
+        // Backfill next_review for new-next_review-only reviews (SM-2 recorded with valid next_review but interval_days=0)
+        let _ = conn.execute(
+            "UPDATE reviews SET interval_days = CAST(
+                julianday(next_review) - julianday(reviewed_at) AS INTEGER
+             ) WHERE interval_days = 0 AND next_review != ''",
+            [],
+        );
+
         Ok(())
     }
 
@@ -353,6 +403,164 @@ impl Database {
         stmt.query_row(params_refs.as_slice(), |row| row.get(0))
     }
 
+    fn sm2_ef(ef: f64, quality: i32) -> f64 {
+        let new_ef = ef + (0.1 - (5 - quality) as f64 * (0.08 + (5 - quality) as f64 * 0.02));
+        new_ef.max(1.3)
+    }
+
+    pub fn record_review(&self, problem_id: i64, confidence: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+
+        // Load previous SM-2 state for this problem
+        let (prev_ef, prev_interval, prev_reps): (f64, i64, i64) = conn
+            .query_row(
+                "SELECT ease_factor, interval_days, repetitions
+                 FROM reviews WHERE problem_id = ?1
+                 ORDER BY id DESC LIMIT 1",
+                params![problem_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap_or((2.5, 0, 0));
+
+        let quality = match confidence {
+            "easy" => 4,
+            "medium" => 3,
+            _ => 1,
+        };
+
+        let (new_ef, new_interval, new_reps) = if quality < 3 {
+            // Hard → reset
+            let ef = Self::sm2_ef(prev_ef, quality);
+            (ef, 1i64, 0i64)
+        } else if prev_reps == 0 {
+            let ef = Self::sm2_ef(prev_ef, quality);
+            (ef, 1i64, 1i64)
+        } else if prev_reps == 1 {
+            let ef = Self::sm2_ef(prev_ef, quality);
+            (ef, 6i64, 2i64)
+        } else {
+            let ef = Self::sm2_ef(prev_ef, quality);
+            let interval = (prev_interval as f64 * ef).round() as i64;
+            (ef, interval.max(1), prev_reps + 1)
+        };
+
+        let next_review_sql = format!(
+            "datetime('now','localtime', '+{} days')",
+            new_interval
+        );
+
+        conn.execute(
+            &format!(
+                "INSERT INTO reviews (problem_id, confidence, ease_factor, interval_days, repetitions, next_review)
+                 VALUES (?1, ?2, ?3, ?4, ?5, {})",
+                next_review_sql
+            ),
+            params![problem_id, confidence, new_ef, new_interval, new_reps],
+        )?;
+
+        Ok(())
+    }
+
+    pub fn get_review_queue(&self) -> Result<Vec<Problem>> {
+        let conn = self.conn.lock().unwrap();
+        // Problems never reviewed OR past due based on SM-2 next_review
+        let sql = "
+            SELECT p.id, p.leetcode_id, p.title, p.title_cn, p.difficulty, p.status,
+                   p.leetcode_url, p.notes, p.content, p.solution_code, p.code_language,
+                   p.created_at, p.updated_at
+            FROM problems p
+            WHERE (
+                (SELECT COUNT(*) FROM reviews r WHERE r.problem_id = p.id) = 0
+                OR (
+                    (SELECT next_review FROM reviews r WHERE r.problem_id = p.id ORDER BY id DESC LIMIT 1)
+                    <= datetime('now','localtime')
+                )
+            )
+            ORDER BY
+                (SELECT next_review FROM reviews r WHERE r.problem_id = p.id ORDER BY id DESC LIMIT 1) IS NULL DESC,
+                (SELECT next_review FROM reviews r WHERE r.problem_id = p.id ORDER BY id DESC LIMIT 1) ASC
+        ";
+        let mut stmt = conn.prepare(sql)?;
+        let problems = stmt.query_map([], |row| {
+            Ok(Problem {
+                id: row.get(0)?,
+                leetcode_id: row.get(1)?,
+                title: row.get(2)?,
+                title_cn: row.get(3)?,
+                difficulty: row.get(4)?,
+                status: row.get(5)?,
+                leetcode_url: row.get(6)?,
+                notes: row.get(7)?,
+                content: row.get(8)?,
+                solution_code: row.get(9)?,
+                code_language: row.get(10)?,
+                created_at: row.get(11)?,
+                updated_at: row.get(12)?,
+                tags: Vec::new(),
+            })
+        })?.filter_map(|r| r.ok()).collect::<Vec<_>>();
+
+        // Load tags for each problem
+        let mut result = Vec::new();
+        for mut p in problems {
+            let tag_sql = "SELECT t.id, t.name, t.color FROM tags t
+                           JOIN problem_tags pt ON t.id = pt.tag_id
+                           WHERE pt.problem_id = ?1 ORDER BY t.id";
+            if let Ok(mut stmt) = conn.prepare(tag_sql) {
+                if let Ok(rows) = stmt.query_map(params![p.id], |row| {
+                    Ok(Tag {
+                        id: row.get(0)?,
+                        name: row.get(1)?,
+                        color: row.get(2)?,
+                    })
+                }) {
+                    p.tags = rows.collect::<Result<Vec<_>>>().unwrap_or_default();
+                }
+            }
+            result.push(p);
+        }
+        Ok(result)
+    }
+
+    pub fn get_review_stats(&self) -> Result<(i64, i64, i64)> {
+        let conn = self.conn.lock().unwrap();
+        // total_reviewed, today_reviewed, due_count
+        let total_reviewed: i64 = conn.query_row(
+            "SELECT COUNT(DISTINCT problem_id) FROM reviews", [], |row| row.get(0),
+        ).unwrap_or(0);
+
+        let today_reviewed: i64 = conn.query_row(
+            "SELECT COUNT(DISTINCT problem_id) FROM reviews
+             WHERE date(reviewed_at) = date('now','localtime')", [], |row| row.get(0),
+        ).unwrap_or(0);
+
+        let due_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM problems p WHERE (
+                (SELECT COUNT(*) FROM reviews r WHERE r.problem_id = p.id) = 0
+                OR (
+                    (SELECT next_review FROM reviews r WHERE r.problem_id = p.id ORDER BY id DESC LIMIT 1)
+                    <= datetime('now','localtime')
+                )
+            )", [], |row| row.get(0),
+        ).unwrap_or(0);
+
+        Ok((total_reviewed, today_reviewed, due_count))
+    }
+
+    pub fn get_random_problem(&self) -> Result<Option<Problem>> {
+        let conn = self.conn.lock().unwrap();
+        let ids: Vec<i64> = conn.prepare("SELECT id FROM problems ORDER BY RANDOM() LIMIT 1")
+            .and_then(|mut stmt| {
+                let rows = stmt.query_map([], |row| row.get::<_, i64>(0))?;
+                Ok(rows.filter_map(|r| r.ok()).collect::<Vec<_>>())
+            }).unwrap_or_default();
+
+        match ids.first() {
+            Some(id) => Ok(Some(Self::get_problem_by_conn(&conn, *id)?)),
+            None => Ok(None),
+        }
+    }
+
     pub fn create_problem(&self, data: &CreateProblemDTO) -> Result<Problem> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
@@ -499,8 +707,107 @@ impl Database {
         })
     }
 
+    pub fn compute_submission_stats(&self) -> Result<i64> {
+        let conn = self.conn.lock().unwrap();
+        // Clear old stats
+        conn.execute("DELETE FROM submission_stats", [])?;
+        // Insert fresh stats from problems table: solved→1/1, attempted→1/0
+        let inserted = conn.execute(
+            "INSERT INTO submission_stats (problem_id, total_tries, total_accepted, updated_at)
+             SELECT id, 1,
+                    CASE WHEN status = 'solved' THEN 1 ELSE 0 END,
+                    datetime('now','localtime')
+             FROM problems
+             WHERE status IN ('solved', 'attempted')",
+            [],
+        )?;
+        Ok(inserted as i64)
+    }
+
+    pub fn update_submission_stats(&self, stats: Vec<SubmissionStat>) -> Result<i64> {
+        let conn = self.conn.lock().unwrap();
+        let mut processed = 0i64;
+
+        // Build a map of title_slug (from leetcode_url) to problem_id
+        let mut slug_map: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+        if let Ok(mut stmt) = conn.prepare("SELECT id, leetcode_url FROM problems WHERE leetcode_url IS NOT NULL") {
+            if let Ok(rows) = stmt.query_map([], |row| {
+                let id: i64 = row.get(0)?;
+                let url: String = row.get(1)?;
+                // Extract slug from url like "https://leetcode.cn/problems/two-sum/"
+                let slug = url
+                    .trim_end_matches('/')
+                    .rsplit('/')
+                    .next()
+                    .unwrap_or("")
+                    .to_string();
+                Ok((id, slug))
+            }) {
+                for r in rows.flatten() {
+                    slug_map.insert(r.1, r.0);
+                }
+            }
+        }
+
+        for stat in &stats {
+            if let Some(&problem_id) = slug_map.get(&stat.title_slug) {
+                conn.execute(
+                    "INSERT INTO submission_stats (problem_id, total_tries, total_accepted, updated_at)
+                     VALUES (?1, ?2, ?3, datetime('now','localtime'))
+                     ON CONFLICT(problem_id) DO UPDATE SET
+                         total_tries = ?2,
+                         total_accepted = ?3,
+                         updated_at = datetime('now','localtime')",
+                    params![problem_id, stat.total_tries, stat.total_accepted],
+                )?;
+                processed += 1;
+            }
+        }
+        Ok(processed)
+    }
+
     pub fn get_tag_stats(&self) -> Result<Vec<TagStats>> {
         let conn = self.conn.lock().unwrap();
+
+        // Check if submission_stats has data (any row with total_tries > 0)
+        let has_stats: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM submission_stats WHERE total_tries > 0",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap_or(0)
+            > 0;
+
+        if has_stats {
+            // Use submission_stats for accuracy: sum of tries and accepts per tag
+            let mut stmt = conn.prepare(
+                "SELECT t.id, t.name,
+                        COALESCE(SUM(ss.total_tries), 0) as total,
+                        COALESCE(SUM(ss.total_accepted), 0) as solved,
+                        COALESCE(SUM(ss.total_tries), 0) as total_tries
+                 FROM tags t
+                 JOIN problem_tags pt ON t.id = pt.tag_id
+                 JOIN problems p ON pt.problem_id = p.id
+                 LEFT JOIN submission_stats ss ON p.id = ss.problem_id
+                 GROUP BY t.id, t.name
+                 ORDER BY total_tries DESC"
+            )?;
+            let stats = stmt.query_map([], |row| {
+                let total: i64 = row.get(2)?;
+                let solved: i64 = row.get(3)?;
+                Ok(TagStats {
+                    tag_id: row.get(0)?,
+                    tag_name: row.get(1)?,
+                    total,
+                    solved,
+                    rate: if total > 0 { solved as f64 / total as f64 } else { 0.0 },
+                })
+            })?.filter_map(|r| r.ok()).collect();
+            return Ok(stats);
+        }
+
+        // Fallback: use problem status
         let mut stmt = conn.prepare(
             "SELECT t.id, t.name,
                     COUNT(pt.problem_id) as total,
@@ -595,6 +902,23 @@ impl Database {
                 })
             })
         }
+    }
+
+    pub fn get_all_problem_slugs(&self) -> Result<Vec<(i64, String)>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT id, leetcode_url FROM problems WHERE leetcode_url IS NOT NULL")?;
+        let rows = stmt.query_map([], |row| {
+            let id: i64 = row.get(0)?;
+            let url: String = row.get(1)?;
+            let slug = url
+                .trim_end_matches('/')
+                .rsplit('/')
+                .next()
+                .unwrap_or("")
+                .to_string();
+            Ok((id, slug))
+        })?;
+        Ok(rows.filter_map(|r| r.ok()).collect())
     }
 
     pub fn delete_code_snippet(&self, id: i64) -> Result<()> {

@@ -46,6 +46,13 @@ pub fn run() {
             commands::get_setting,
             commands::set_setting,
             commands::sync_leetcode_progress,
+            commands::get_review_queue,
+            commands::record_review,
+            commands::get_review_stats,
+            commands::get_random_problem,
+            commands::get_last_accepted_submission,
+            commands::refresh_submission_stats,
+            commands::sync_ac_codes,
             commands::submit_code,
             commands::open_leetcode_login,
         ])
