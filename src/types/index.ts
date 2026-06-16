@@ -179,7 +179,7 @@ export interface ApiEntry {
   signature: string
   signatures?: string[]
   description: string
-  example: string
+  example?: string
   examples?: ApiExample[]
   returns?: string
   complexity?: string

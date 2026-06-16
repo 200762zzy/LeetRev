@@ -137,7 +137,7 @@ export function ApiSearch({ open, onClose, problemId }: Props) {
   }, [])
 
   const getSignatures = (e: ApiEntry): string[] => e.signatures ?? [e.signature]
-  const getExamples = (e: ApiEntry): { title?: string; code: string }[] => e.examples ?? [{ code: e.example }]
+  const getExamples = (e: ApiEntry): { title?: string; code: string }[] => e.examples ?? [{ code: e.example ?? '' }]
   const exampleBody = (code: string) => {
     const lines = code.split('\n')
     const indent = lines.reduce((min, l) => {

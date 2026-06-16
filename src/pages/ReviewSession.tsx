@@ -1,13 +1,14 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { invoke } from '@tauri-apps/api/core'
-import { ArrowLeft, Eye, Loader2, ThumbsUp, Meh, ThumbsDown, CheckCircle, BookOpen, BookMarked, Maximize2, Minimize2, Send, X, AlertTriangle } from 'lucide-react'
+import { ArrowLeft, Eye, Loader2, ThumbsUp, Meh, ThumbsDown, CheckCircle, BookOpen, BookMarked, Maximize2, Minimize2, Send, X, AlertTriangle, FileText } from 'lucide-react'
 import DOMPurify from 'dompurify'
 import type { Problem, CodeLanguage, CodeSnippet, CodeTemplate, SubmissionResult } from '../types'
 import { LANGUAGES } from '../types'
 import { difficultyColor } from '../lib/utils'
 import { CodeEditor } from '../components/CodeEditor'
 import { CustomApiForm } from '../components/CustomApiForm'
+import { Scratchpad } from '../components/Scratchpad'
 
 type ReviewStage = 'recall' | 'reveal' | 'rated'
 
@@ -28,6 +29,7 @@ export function ReviewSession() {
   const [editingStarted, setEditingStarted] = useState(false)
   const [userNotes, setUserNotes] = useState('')
   const [apiFormOpen, setApiFormOpen] = useState(false)
+  const [scratchpadOpen, setScratchpadOpen] = useState(false)
   const [descExpanded, setDescExpanded] = useState(false)
   const [codeFullscreen, setCodeFullscreen] = useState(false)
   const [hasCookie, setHasCookie] = useState(false)
@@ -321,6 +323,13 @@ export function ReviewSession() {
                       <BookMarked className="h-4 w-4" />
                     </button>
                     <button
+                      onClick={() => setScratchpadOpen(true)}
+                      className="rounded-md p-1.5 text-zinc-400 hover:bg-zinc-100 hover:text-primary-600"
+                      title="草稿板"
+                    >
+                      <FileText className="h-4 w-4" />
+                    </button>
+                    <button
                       onClick={() => setCodeFullscreen(!codeFullscreen)}
                       className="ml-auto rounded-md p-1.5 text-zinc-400 hover:bg-zinc-100 hover:text-primary-600"
                       title={codeFullscreen ? '退出全屏' : '全屏写代码'}
@@ -577,6 +586,11 @@ export function ReviewSession() {
         defaultLanguage={language === 'C++' ? 'cpp' : language === 'Java' ? 'java' : 'python'}
         defaultProblemId={current?.id ?? null}
         onSaved={() => {}}
+      />
+      <Scratchpad
+        open={scratchpadOpen}
+        onClose={() => setScratchpadOpen(false)}
+        problemId={current?.id ?? null}
       />
     </div>
   )

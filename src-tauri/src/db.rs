@@ -153,6 +153,16 @@ impl Database {
             [],
         );
 
+        // Migration: scratchpad column for problems
+        let has_scratchpad = conn
+            .prepare("PRAGMA table_info(problems)")?
+            .query_map([], |row| row.get::<_, String>(1))?
+            .filter_map(|r| r.ok())
+            .any(|name| name == "scratchpad");
+        if !has_scratchpad {
+            conn.execute_batch("ALTER TABLE problems ADD COLUMN scratchpad TEXT DEFAULT ''")?;
+        }
+
         // Migration: custom_api_entries table
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS custom_api_entries (
@@ -1167,6 +1177,24 @@ impl Database {
             Ok((id, slug))
         })?;
         Ok(rows.filter_map(|r| r.ok()).collect())
+    }
+
+    pub fn get_scratchpad(&self, problem_id: i64) -> Result<String> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT scratchpad FROM problems WHERE id = ?1",
+            params![problem_id],
+            |row| row.get::<_, String>(0),
+        ).or(Ok(String::new()))
+    }
+
+    pub fn update_scratchpad(&self, problem_id: i64, content: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE problems SET scratchpad = ?1, updated_at = datetime('now','localtime') WHERE id = ?2",
+            params![content, problem_id],
+        )?;
+        Ok(())
     }
 
     pub fn delete_code_snippet(&self, id: i64) -> Result<()> {

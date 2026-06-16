@@ -253,6 +253,16 @@ pub fn get_random_problem(db: State<Database>) -> Result<Option<Problem>, String
 }
 
 #[tauri::command]
+pub fn get_scratchpad(db: State<Database>, problem_id: i64) -> Result<String, String> {
+    db.get_scratchpad(problem_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn update_scratchpad(db: State<Database>, problem_id: i64, content: String) -> Result<(), String> {
+    db.update_scratchpad(problem_id, &content).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub fn open_leetcode_login() -> Result<(), String> {
     let url = "https://leetcode.cn/accounts/login/";
     println!("[leetcode-login] 在系统浏览器中打开: {}", url);

@@ -51,6 +51,8 @@ pub fn run() {
             commands::get_review_stats,
             commands::get_review_history,
             commands::get_random_problem,
+            commands::get_scratchpad,
+            commands::update_scratchpad,
             commands::get_custom_api_entries,
             commands::get_custom_api_by_container,
             commands::create_custom_api,
