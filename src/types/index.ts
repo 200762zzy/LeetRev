@@ -127,6 +127,12 @@ export interface ReviewStats {
   due_count: number
 }
 
+export interface ReviewRecord {
+  id: number
+  confidence: 'easy' | 'medium' | 'hard'
+  reviewed_at: string
+}
+
 export interface SyncAcCodesResult {
   total_found: number
   saved: number
@@ -155,4 +161,77 @@ export interface ProblemFilters {
   sort_order?: 'asc' | 'desc'
   page?: number
   page_size?: number
+}
+
+export type ApiLanguage = 'cpp' | 'java' | 'python'
+
+export interface ApiExample {
+  title?: string
+  code: string
+}
+
+export interface ApiEntry {
+  id: string
+  language: ApiLanguage
+  category: string
+  name: string
+  full_name?: string
+  signature: string
+  signatures?: string[]
+  description: string
+  example: string
+  examples?: ApiExample[]
+  returns?: string
+  complexity?: string
+  notes?: string
+  leetcode_tips?: string
+  see_also?: string[]
+}
+
+export interface CustomApiEntry {
+  id: number
+  container: string
+  method_name: string
+  language: ApiLanguage
+  signatures: string
+  description: string
+  examples: string
+  returns: string
+  complexity: string
+  notes: string
+  leetcode_tips: string
+  see_also: string
+  problem_id: number | null
+  created_at: string
+  updated_at: string
+}
+
+export interface CreateCustomApiDTO {
+  container: string
+  method_name: string
+  language: ApiLanguage
+  signatures?: string
+  description?: string
+  examples?: string
+  returns?: string
+  complexity?: string
+  notes?: string
+  leetcode_tips?: string
+  see_also?: string
+  problem_id?: number | null
+}
+
+export interface UpdateCustomApiDTO {
+  container?: string
+  method_name?: string
+  language?: ApiLanguage
+  signatures?: string
+  description?: string
+  examples?: string
+  returns?: string
+  complexity?: string
+  notes?: string
+  leetcode_tips?: string
+  see_also?: string
+  problem_id?: number | null
 }

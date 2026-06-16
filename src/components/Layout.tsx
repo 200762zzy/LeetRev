@@ -1,5 +1,7 @@
+import { useState, useEffect } from 'react'
 import { Outlet, NavLink } from 'react-router-dom'
-import { BookOpen, BarChart3, Tags, Settings as SettingsIcon, Github } from 'lucide-react'
+import { BookOpen, BarChart3, Tags, Settings as SettingsIcon, Github, Search } from 'lucide-react'
+import { ApiSearch } from './ApiSearch'
 
 const navItems = [
   { to: '/', icon: BarChart3, label: '概览' },
@@ -9,6 +11,19 @@ const navItems = [
 ]
 
 export function Layout() {
+  const [apiSearchOpen, setApiSearchOpen] = useState(false)
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'A') {
+        e.preventDefault()
+        setApiSearchOpen(prev => !prev)
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [])
+
   return (
     <div className="flex h-screen bg-zinc-50">
       <aside className="flex w-56 flex-col border-r border-zinc-200 bg-white">
@@ -57,6 +72,17 @@ export function Layout() {
           <Outlet />
         </div>
       </main>
+
+      {/* Floating API search button */}
+      <button
+        onClick={() => setApiSearchOpen(true)}
+        className="fixed bottom-6 right-6 z-40 flex h-10 w-10 items-center justify-center rounded-full bg-primary-600 text-white shadow-lg transition-all hover:bg-primary-700 hover:shadow-xl active:scale-95"
+        title="API 速查 (Ctrl+Shift+A)"
+      >
+        <Search className="h-4 w-4" />
+      </button>
+
+      <ApiSearch open={apiSearchOpen} onClose={() => setApiSearchOpen(false)} />
     </div>
   )
 }

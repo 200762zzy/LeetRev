@@ -176,6 +176,13 @@ pub struct ReviewStats {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReviewRecord {
+    pub id: i64,
+    pub confidence: String,
+    pub reviewed_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SyncAcCodesResult {
     pub total_found: i64,
     pub saved: i64,
@@ -192,4 +199,76 @@ pub struct ProblemFilters {
     pub sort_order: Option<String>,
     pub page: Option<i64>,
     pub page_size: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CustomApiEntry {
+    pub id: i64,
+    pub container: String,
+    pub method_name: String,
+    pub language: String,
+    pub signatures: String,
+    pub description: String,
+    pub examples: String,
+    pub returns: String,
+    pub complexity: String,
+    pub notes: String,
+    pub leetcode_tips: String,
+    pub see_also: String,
+    pub problem_id: Option<i64>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateCustomApiDTO {
+    pub container: String,
+    pub method_name: String,
+    pub language: String,
+    #[serde(default)]
+    pub signatures: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub examples: Option<String>,
+    #[serde(default)]
+    pub returns: Option<String>,
+    #[serde(default)]
+    pub complexity: Option<String>,
+    #[serde(default)]
+    pub notes: Option<String>,
+    #[serde(default)]
+    pub leetcode_tips: Option<String>,
+    #[serde(default)]
+    pub see_also: Option<String>,
+    #[serde(default)]
+    pub problem_id: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateCustomApiDTO {
+    #[serde(default)]
+    pub container: Option<String>,
+    #[serde(default)]
+    pub method_name: Option<String>,
+    #[serde(default)]
+    pub language: Option<String>,
+    #[serde(default)]
+    pub signatures: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub examples: Option<String>,
+    #[serde(default)]
+    pub returns: Option<String>,
+    #[serde(default)]
+    pub complexity: Option<String>,
+    #[serde(default)]
+    pub notes: Option<String>,
+    #[serde(default)]
+    pub leetcode_tips: Option<String>,
+    #[serde(default)]
+    pub see_also: Option<String>,
+    #[serde(default)]
+    pub problem_id: Option<i64>,
 }

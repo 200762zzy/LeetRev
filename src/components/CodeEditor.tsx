@@ -39,7 +39,7 @@ export function CodeEditor({ code, language, onChange, editable = true }: Props)
   return (
     <CodeMirror
       value={code}
-      height="min(calc(100vh - 400px), 500px)"
+      height="min(calc(100vh - 400px), 700px)"
       extensions={ext}
       onChange={onChange}
       editable={editable}

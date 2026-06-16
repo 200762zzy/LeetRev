@@ -1,12 +1,13 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { invoke } from '@tauri-apps/api/core'
-import { ArrowLeft, Eye, Loader2, ThumbsUp, Meh, ThumbsDown, CheckCircle, BookOpen } from 'lucide-react'
+import { ArrowLeft, Eye, Loader2, ThumbsUp, Meh, ThumbsDown, CheckCircle, BookOpen, BookMarked, Maximize2, Minimize2, Send, X, AlertTriangle } from 'lucide-react'
 import DOMPurify from 'dompurify'
-import type { Problem, CodeLanguage, CodeSnippet, CodeTemplate } from '../types'
+import type { Problem, CodeLanguage, CodeSnippet, CodeTemplate, SubmissionResult } from '../types'
 import { LANGUAGES } from '../types'
 import { difficultyColor } from '../lib/utils'
 import { CodeEditor } from '../components/CodeEditor'
+import { CustomApiForm } from '../components/CustomApiForm'
 
 type ReviewStage = 'recall' | 'reveal' | 'rated'
 
@@ -25,6 +26,14 @@ export function ReviewSession() {
   const [savingCode, setSavingCode] = useState(false)
   const [templates, setTemplates] = useState<CodeTemplate[]>([])
   const [editingStarted, setEditingStarted] = useState(false)
+  const [userNotes, setUserNotes] = useState('')
+  const [apiFormOpen, setApiFormOpen] = useState(false)
+  const [descExpanded, setDescExpanded] = useState(false)
+  const [codeFullscreen, setCodeFullscreen] = useState(false)
+  const [hasCookie, setHasCookie] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
+  const [submitResult, setSubmitResult] = useState<SubmissionResult | null>(null)
+  const [submissionBlocked, setSubmissionBlocked] = useState(false)
 
   const loadQueue = useCallback(async () => {
     setLoading(true)
@@ -41,6 +50,12 @@ export function ReviewSession() {
     loadQueue()
   }, [loadQueue])
 
+  useEffect(() => {
+    invoke<string | null>('get_setting', { key: 'leetcode_session' }).then(v => {
+      setHasCookie(v !== null && v !== '')
+    })
+  }, [])
+
   const current = queue[index]
 
   useEffect(() => {
@@ -50,7 +65,11 @@ export function ReviewSession() {
     setUserCode('')
     setLanguage('Python')
     setEditingStarted(false)
+    setUserNotes(current.notes ?? '')
     setSnippetsLoading(true)
+    setSubmitResult(null)
+    setSubmissionBlocked(false)
+    setCodeFullscreen(false)
 
     let snipsResult: CodeSnippet[] | null = null
     let tplsResult: CodeTemplate[] | null = current.leetcode_id ? null : []
@@ -90,6 +109,8 @@ export function ReviewSession() {
     try {
       await invoke('record_review', { problemId: current.id, confidence })
 
+      await invoke('update_problem', { id: current.id, data: { notes: userNotes || null } })
+
       if (userCode.trim()) {
         setSavingCode(true)
         try {
@@ -113,6 +134,47 @@ export function ReviewSession() {
       console.error(e)
     }
     setSaving(false)
+  }
+
+  const handleSubmitCode = async () => {
+    if (!current?.leetcode_id) return
+    setSubmitting(true)
+    try {
+      const result = await invoke<SubmissionResult>('submit_code', {
+        leetcodeId: current.leetcode_id,
+        language,
+        code: userCode,
+      })
+      setSubmitResult(result)
+
+      if (result.status === 'Accepted') {
+        setSubmissionBlocked(false)
+        await invoke('save_code_snippet', {
+          data: { problem_id: current.id, language, code: userCode },
+        })
+        await invoke('update_problem', {
+          id: current.id,
+          data: { notes: userNotes || null },
+        })
+      } else {
+        setSubmissionBlocked(true)
+      }
+    } catch (e) {
+      console.error(e)
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const handleDismissSubmit = () => {
+    if (!submissionBlocked) {
+      setSubmitResult(null)
+    }
+  }
+
+  const handleAbandonSubmit = () => {
+    setSubmissionBlocked(false)
+    setSubmitResult(null)
   }
 
   if (loading) {
@@ -156,7 +218,7 @@ export function ReviewSession() {
   }
 
   return (
-    <div className="mx-auto max-w-2xl space-y-6">
+    <div className="mx-auto max-w-6xl space-y-6">
       <div className="flex items-center gap-4">
         <button className="btn-ghost p-1.5" onClick={() => navigate('/')}>
           <ArrowLeft className="h-5 w-5" />
@@ -199,61 +261,219 @@ export function ReviewSession() {
         <div className="border-t border-zinc-100 pt-4">
           {stage === 'recall' && (
             <div className="space-y-4">
-              {current.content && (
-                <div
-                  className="prose prose-sm max-w-none text-zinc-700 [&_pre]:rounded-lg [&_pre]:bg-zinc-100 [&_pre]:p-3 [&_code]:text-sm"
-                  dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(current.content) }}
-                />
+              {!codeFullscreen && current.content && (
+                <div className="relative">
+                  <div
+                    className={`prose prose-sm max-w-none text-zinc-700 [&_pre]:rounded-lg [&_pre]:bg-zinc-100 [&_pre]:p-3 [&_code]:text-sm overflow-hidden transition-all ${
+                      descExpanded ? '' : 'max-h-40'
+                    }`}
+                    dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(current.content) }}
+                  />
+                  <button
+                    onClick={() => setDescExpanded(!descExpanded)}
+                    className="mt-1 text-xs text-primary-600 hover:text-primary-700"
+                  >
+                    {descExpanded ? '收起描述' : '展开完整描述'}
+                  </button>
+                </div>
               )}
-              {!current.content && (
+              {!codeFullscreen && !current.content && (
                 <p className="text-sm text-zinc-400">该题目暂无描述，请先在详情页抓取</p>
               )}
 
-              <div className="space-y-2">
-                <div className="flex items-center gap-2">
-                  <select
-                    className="input-field w-auto"
-                    value={language}
-                    onChange={(e) => {
-                      const newLang = e.target.value as CodeLanguage
-                      setLanguage(newLang)
-                      if (!editingStarted) {
-                        const tpl = templates.find(t => t.lang === newLang)
-                        if (tpl) setUserCode(tpl.code)
-                      }
-                    }}
-                  >
-                    {LANGUAGES.map((l) => (
-                      <option key={l} value={l}>{l}</option>
-                    ))}
-                  </select>
-                  <span className="text-xs text-zinc-400">编写你的解答</span>
+              {codeFullscreen && (
+                <div className="flex items-center justify-between rounded-lg bg-zinc-50 px-3 py-2">
+                  <span className="text-sm font-medium text-zinc-700">
+                    #{current.leetcode_id ?? '-'} {current.title}
+                    {current.title_cn && <span className="text-zinc-400 ml-1">/ {current.title_cn}</span>}
+                  </span>
+                  <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${difficultyColor(current.difficulty)}`}>
+                    {current.difficulty}
+                  </span>
                 </div>
-                <CodeEditor
-                  code={userCode}
-                  language={language}
-                  onChange={(v) => {
-                    if (!editingStarted) setEditingStarted(true)
-                    setUserCode(v ?? '')
-                  }}
-                  editable
-                />
+              )}
+
+              <div className={`grid grid-cols-1 gap-4 ${codeFullscreen ? '' : 'md:grid-cols-[1fr_380px]'}`}>
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <select
+                      className="input-field w-auto"
+                      value={language}
+                      onChange={(e) => {
+                        const newLang = e.target.value as CodeLanguage
+                        setLanguage(newLang)
+                        if (!editingStarted) {
+                          const tpl = templates.find(t => t.lang === newLang)
+                          if (tpl) setUserCode(tpl.code)
+                        }
+                      }}
+                    >
+                      {LANGUAGES.map((l) => (
+                        <option key={l} value={l}>{l}</option>
+                      ))}
+                    </select>
+                    <span className="text-xs text-zinc-400">编写代码</span>
+                    <button
+                      onClick={() => setApiFormOpen(true)}
+                      className="rounded-md p-1.5 text-zinc-400 hover:bg-zinc-100 hover:text-primary-600"
+                      title="添加 API 笔记"
+                    >
+                      <BookMarked className="h-4 w-4" />
+                    </button>
+                    <button
+                      onClick={() => setCodeFullscreen(!codeFullscreen)}
+                      className="ml-auto rounded-md p-1.5 text-zinc-400 hover:bg-zinc-100 hover:text-primary-600"
+                      title={codeFullscreen ? '退出全屏' : '全屏写代码'}
+                    >
+                      {codeFullscreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+                    </button>
+                  </div>
+                  <CodeEditor
+                    code={userCode}
+                    language={language}
+                    onChange={(v) => {
+                      if (!editingStarted) setEditingStarted(true)
+                      setUserCode(v ?? '')
+                    }}
+                    editable
+                  />
+
+                  {/* Submission Result Panel */}
+                  {submitResult && (
+                    <div className={`rounded-lg border p-3 ${
+                      submitResult.status === 'Accepted'
+                        ? 'border-emerald-200 bg-emerald-50'
+                        : submitResult.status === 'Wrong Answer'
+                          ? 'border-red-200 bg-red-50'
+                          : submitResult.status === 'Compile Error'
+                            ? 'border-amber-200 bg-amber-50'
+                            : 'border-orange-200 bg-orange-50'
+                    }`}>
+                      <div className="flex items-start justify-between">
+                        <div className="flex items-center gap-2">
+                          {submitResult.status === 'Accepted'
+                            ? <CheckCircle className="h-5 w-5 text-emerald-600" />
+                            : <AlertTriangle className="h-5 w-5 text-red-500" />
+                          }
+                          <span className={`text-sm font-semibold ${
+                            submitResult.status === 'Accepted' ? 'text-emerald-700' : 'text-red-700'
+                          }`}>
+                            {submitResult.status === 'Accepted'
+                              ? `通过! (${submitResult.passed}/${submitResult.total})`
+                              : `${submitResult.status} (${submitResult.passed}/${submitResult.total})`
+                            }
+                          </span>
+                        </div>
+                        {!submissionBlocked && (
+                          <button onClick={handleDismissSubmit} className="p-0.5 text-zinc-400 hover:text-zinc-600">
+                            <X className="h-4 w-4" />
+                          </button>
+                        )}
+                      </div>
+
+                      {submitResult.status === 'Accepted' && (
+                        <div className="mt-2 space-y-1 text-xs">
+                          {submitResult.runtime && <p className="text-emerald-600">运行时间: {submitResult.runtime}</p>}
+                          {submitResult.memory && <p className="text-emerald-600">内存: {submitResult.memory}</p>}
+                          <p className="text-emerald-600 flex items-center gap-1"><CheckCircle className="h-3 w-3" /> 代码和心得已自动保存</p>
+                        </div>
+                      )}
+
+                      {submitResult.status === 'Wrong Answer' && (
+                        <div className="mt-2 space-y-1 text-xs text-red-600">
+                          {submitResult.last_testcase && <p>输入: <code className="rounded bg-red-100 px-1">{submitResult.last_testcase}</code></p>}
+                          {submitResult.code_output && <p>你的输出: <code className="rounded bg-red-100 px-1">{submitResult.code_output}</code></p>}
+                          {submitResult.expected_output && <p>预期输出: <code className="rounded bg-red-100 px-1">{submitResult.expected_output}</code></p>}
+                        </div>
+                      )}
+
+                      {submitResult.status === 'Compile Error' && submitResult.compile_error && (
+                        <pre className="mt-2 overflow-x-auto rounded bg-amber-100 p-2 text-xs text-amber-800">{submitResult.compile_error}</pre>
+                      )}
+
+                      {submitResult.status === 'Runtime Error' && (
+                        <div className="mt-2 space-y-1 text-xs text-orange-700">
+                          {submitResult.runtime_error && <pre className="overflow-x-auto rounded bg-orange-100 p-2">{submitResult.runtime_error}</pre>}
+                          {submitResult.last_testcase && <p>输入: <code className="rounded bg-orange-100 px-1">{submitResult.last_testcase}</code></p>}
+                        </div>
+                      )}
+
+                      <div className="mt-2 flex items-center gap-2">
+                        <button
+                          onClick={handleSubmitCode}
+                          disabled={submitting}
+                          className="rounded-md px-3 py-1.5 text-xs font-medium bg-white border border-zinc-200 text-zinc-700 hover:bg-zinc-50 disabled:opacity-50"
+                        >
+                          {submitting ? '提交中...' : '重新提交'}
+                        </button>
+                        {submissionBlocked && (
+                          <button onClick={handleAbandonSubmit} className="rounded-md px-3 py-1.5 text-xs font-medium text-zinc-500 hover:bg-zinc-100">
+                            放弃提交→查看对比
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {!codeFullscreen && (
+                  <div className="space-y-2">
+                    <span className="text-xs font-medium text-zinc-500">解题思路</span>
+                    <textarea
+                      className="w-full rounded-lg border border-zinc-200 bg-white p-3 text-sm text-zinc-900 outline-none transition-colors focus:border-primary-500 focus:ring-2 focus:ring-primary-500 resize-none"
+                      rows={10}
+                      value={userNotes}
+                      onChange={e => setUserNotes(e.target.value)}
+                      placeholder="写下你的解题思路、注意事项、算法要点..."
+                    />
+                  </div>
+                )}
               </div>
 
-              <button className="btn-primary w-full" onClick={handleReveal}>
-                <Eye className="h-4 w-4" />
-                查看对比
-              </button>
+              <div className="flex items-center gap-2">
+                {hasCookie && (
+                  <button
+                    className="btn-primary flex-1"
+                    onClick={handleSubmitCode}
+                    disabled={submitting || !current.leetcode_id}
+                  >
+                    {submitting ? (
+                      <><Loader2 className="h-4 w-4 animate-spin" /> 判题中...</>
+                    ) : (
+                      <><Send className="h-4 w-4" /> 提交判题</>
+                    )}
+                  </button>
+                )}
+                <button
+                  className={`${hasCookie ? 'btn-secondary flex-1' : 'btn-primary w-full'}`}
+                  onClick={handleReveal}
+                  disabled={submissionBlocked}
+                  title={submissionBlocked ? '提交未通过，请修改代码后重新提交' : undefined}
+                >
+                  <Eye className="h-4 w-4" />
+                  查看对比
+                </button>
+              </div>
             </div>
           )}
 
           {stage === 'reveal' && (
             <div className="space-y-4">
               {current.content && (
-                <div
-                  className="prose prose-sm max-w-none text-zinc-700 [&_pre]:rounded-lg [&_pre]:bg-zinc-100 [&_pre]:p-3 [&_code]:text-sm"
-                  dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(current.content) }}
-                />
+                <div className="relative">
+                  <div
+                    className={`prose prose-sm max-w-none text-zinc-700 [&_pre]:rounded-lg [&_pre]:bg-zinc-100 [&_pre]:p-3 [&_code]:text-sm overflow-hidden transition-all ${
+                      descExpanded ? '' : 'max-h-40'
+                    }`}
+                    dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(current.content) }}
+                  />
+                  <button
+                    onClick={() => setDescExpanded(!descExpanded)}
+                    className="mt-1 text-xs text-primary-600 hover:text-primary-700"
+                  >
+                    {descExpanded ? '收起描述' : '展开完整描述'}
+                  </button>
+                </div>
               )}
 
               {userCode.trim() && (
@@ -279,10 +499,10 @@ export function ReviewSession() {
                 </div>
               )}
 
-              {current.notes && (
+              {userNotes && (
                 <div>
                   <h3 className="mb-2 text-sm font-semibold text-zinc-900">解题思路</h3>
-                  <p className="whitespace-pre-wrap rounded-lg bg-zinc-50 p-4 text-sm text-zinc-600">{current.notes}</p>
+                  <p className="whitespace-pre-wrap rounded-lg bg-zinc-50 p-4 text-sm text-zinc-600">{userNotes}</p>
                 </div>
               )}
 
@@ -351,6 +571,13 @@ export function ReviewSession() {
           )}
         </div>
       </div>
+      <CustomApiForm
+        open={apiFormOpen}
+        onClose={() => setApiFormOpen(false)}
+        defaultLanguage={language === 'C++' ? 'cpp' : language === 'Java' ? 'java' : 'python'}
+        defaultProblemId={current?.id ?? null}
+        onSaved={() => {}}
+      />
     </div>
   )
 }

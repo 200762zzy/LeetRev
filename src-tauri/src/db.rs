@@ -153,6 +153,27 @@ impl Database {
             [],
         );
 
+        // Migration: custom_api_entries table
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS custom_api_entries (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                container TEXT NOT NULL,
+                method_name TEXT NOT NULL,
+                language TEXT NOT NULL DEFAULT 'cpp',
+                signatures TEXT DEFAULT '[]',
+                description TEXT DEFAULT '',
+                examples TEXT DEFAULT '[]',
+                returns TEXT DEFAULT '',
+                complexity TEXT DEFAULT '',
+                notes TEXT DEFAULT '',
+                leetcode_tips TEXT DEFAULT '',
+                see_also TEXT DEFAULT '[]',
+                problem_id INTEGER REFERENCES problems(id) ON DELETE SET NULL,
+                created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+            );"
+        )?;
+
         Ok(())
     }
 
@@ -210,6 +231,212 @@ impl Database {
     pub fn delete_tag(&self, id: i64) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute("DELETE FROM tags WHERE id = ?1", params![id])?;
+        Ok(())
+    }
+
+    pub fn get_custom_api_entries(&self) -> Result<Vec<CustomApiEntry>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, container, method_name, language, signatures, description, examples,
+                    returns, complexity, notes, leetcode_tips, see_also,
+                    problem_id, created_at, updated_at
+             FROM custom_api_entries ORDER BY container, method_name"
+        )?;
+        let entries = stmt.query_map([], |row| {
+            Ok(CustomApiEntry {
+                id: row.get(0)?,
+                container: row.get(1)?,
+                method_name: row.get(2)?,
+                language: row.get(3)?,
+                signatures: row.get::<_, String>(4).unwrap_or_default(),
+                description: row.get::<_, String>(5).unwrap_or_default(),
+                examples: row.get::<_, String>(6).unwrap_or_default(),
+                returns: row.get::<_, String>(7).unwrap_or_default(),
+                complexity: row.get::<_, String>(8).unwrap_or_default(),
+                notes: row.get::<_, String>(9).unwrap_or_default(),
+                leetcode_tips: row.get::<_, String>(10).unwrap_or_default(),
+                see_also: row.get::<_, String>(11).unwrap_or_default(),
+                problem_id: row.get(12)?,
+                created_at: row.get(13)?,
+                updated_at: row.get(14)?,
+            })
+        })?.filter_map(|r| r.ok()).collect();
+        Ok(entries)
+    }
+
+    pub fn get_custom_api_by_container(&self, container: &str) -> Result<Vec<CustomApiEntry>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, container, method_name, language, signatures, description, examples,
+                    returns, complexity, notes, leetcode_tips, see_also,
+                    problem_id, created_at, updated_at
+             FROM custom_api_entries WHERE container = ?1 ORDER BY method_name"
+        )?;
+        let entries = stmt.query_map(params![container], |row| {
+            Ok(CustomApiEntry {
+                id: row.get(0)?,
+                container: row.get(1)?,
+                method_name: row.get(2)?,
+                language: row.get(3)?,
+                signatures: row.get::<_, String>(4).unwrap_or_default(),
+                description: row.get::<_, String>(5).unwrap_or_default(),
+                examples: row.get::<_, String>(6).unwrap_or_default(),
+                returns: row.get::<_, String>(7).unwrap_or_default(),
+                complexity: row.get::<_, String>(8).unwrap_or_default(),
+                notes: row.get::<_, String>(9).unwrap_or_default(),
+                leetcode_tips: row.get::<_, String>(10).unwrap_or_default(),
+                see_also: row.get::<_, String>(11).unwrap_or_default(),
+                problem_id: row.get(12)?,
+                created_at: row.get(13)?,
+                updated_at: row.get(14)?,
+            })
+        })?.filter_map(|r| r.ok()).collect();
+        Ok(entries)
+    }
+
+    pub fn create_custom_api(&self, data: &CreateCustomApiDTO) -> Result<CustomApiEntry> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO custom_api_entries
+             (container, method_name, language, signatures, description, examples,
+              returns, complexity, notes, leetcode_tips, see_also, problem_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+            params![
+                data.container,
+                data.method_name,
+                data.language,
+                data.signatures.as_deref().unwrap_or("[]"),
+                data.description.as_deref().unwrap_or(""),
+                data.examples.as_deref().unwrap_or("[]"),
+                data.returns.as_deref().unwrap_or(""),
+                data.complexity.as_deref().unwrap_or(""),
+                data.notes.as_deref().unwrap_or(""),
+                data.leetcode_tips.as_deref().unwrap_or(""),
+                data.see_also.as_deref().unwrap_or("[]"),
+                data.problem_id,
+            ],
+        )?;
+        let id = conn.last_insert_rowid();
+        self.get_custom_api_by_id(id)
+    }
+
+    pub fn get_custom_api_by_id(&self, id: i64) -> Result<CustomApiEntry> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT id, container, method_name, language, signatures, description, examples,
+                    returns, complexity, notes, leetcode_tips, see_also,
+                    problem_id, created_at, updated_at
+             FROM custom_api_entries WHERE id = ?1",
+            params![id],
+            |row| {
+                Ok(CustomApiEntry {
+                    id: row.get(0)?,
+                    container: row.get(1)?,
+                    method_name: row.get(2)?,
+                    language: row.get(3)?,
+                    signatures: row.get::<_, String>(4).unwrap_or_default(),
+                    description: row.get::<_, String>(5).unwrap_or_default(),
+                    examples: row.get::<_, String>(6).unwrap_or_default(),
+                    returns: row.get::<_, String>(7).unwrap_or_default(),
+                    complexity: row.get::<_, String>(8).unwrap_or_default(),
+                    notes: row.get::<_, String>(9).unwrap_or_default(),
+                    leetcode_tips: row.get::<_, String>(10).unwrap_or_default(),
+                    see_also: row.get::<_, String>(11).unwrap_or_default(),
+                    problem_id: row.get(12)?,
+                    created_at: row.get(13)?,
+                    updated_at: row.get(14)?,
+                })
+            },
+        )
+    }
+
+    pub fn update_custom_api(&self, id: i64, data: &UpdateCustomApiDTO) -> Result<CustomApiEntry> {
+        let conn = self.conn.lock().unwrap();
+        let mut sets = Vec::new();
+        let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+        let mut idx = 1;
+
+        if let Some(ref v) = data.container {
+            sets.push(format!("container = ?{}", idx));
+            params.push(Box::new(v.clone()));
+            idx += 1;
+        }
+        if let Some(ref v) = data.method_name {
+            sets.push(format!("method_name = ?{}", idx));
+            params.push(Box::new(v.clone()));
+            idx += 1;
+        }
+        if let Some(ref v) = data.language {
+            sets.push(format!("language = ?{}", idx));
+            params.push(Box::new(v.clone()));
+            idx += 1;
+        }
+        if let Some(ref v) = data.signatures {
+            sets.push(format!("signatures = ?{}", idx));
+            params.push(Box::new(v.clone()));
+            idx += 1;
+        }
+        if let Some(ref v) = data.description {
+            sets.push(format!("description = ?{}", idx));
+            params.push(Box::new(v.clone()));
+            idx += 1;
+        }
+        if let Some(ref v) = data.examples {
+            sets.push(format!("examples = ?{}", idx));
+            params.push(Box::new(v.clone()));
+            idx += 1;
+        }
+        if let Some(ref v) = data.returns {
+            sets.push(format!("returns = ?{}", idx));
+            params.push(Box::new(v.clone()));
+            idx += 1;
+        }
+        if let Some(ref v) = data.complexity {
+            sets.push(format!("complexity = ?{}", idx));
+            params.push(Box::new(v.clone()));
+            idx += 1;
+        }
+        if let Some(ref v) = data.notes {
+            sets.push(format!("notes = ?{}", idx));
+            params.push(Box::new(v.clone()));
+            idx += 1;
+        }
+        if let Some(ref v) = data.leetcode_tips {
+            sets.push(format!("leetcode_tips = ?{}", idx));
+            params.push(Box::new(v.clone()));
+            idx += 1;
+        }
+        if let Some(ref v) = data.see_also {
+            sets.push(format!("see_also = ?{}", idx));
+            params.push(Box::new(v.clone()));
+            idx += 1;
+        }
+        if let Some(v) = data.problem_id {
+            sets.push(format!("problem_id = ?{}", idx));
+            params.push(Box::new(v));
+            idx += 1;
+        }
+
+        if sets.is_empty() {
+            return self.get_custom_api_by_id(id);
+        }
+
+        sets.push("updated_at = datetime('now','localtime')".into());
+        params.push(Box::new(id));
+
+        let sql = format!(
+            "UPDATE custom_api_entries SET {} WHERE id = ?{}",
+            sets.join(", "),
+            idx
+        );
+        conn.execute(&sql, rusqlite::params_from_iter(params.iter().map(|p| p.as_ref())))?;
+        drop(conn);
+        self.get_custom_api_by_id(id)
+    }
+
+    pub fn delete_custom_api(&self, id: i64) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("DELETE FROM custom_api_entries WHERE id = ?1", params![id])?;
         Ok(())
     }
 
@@ -545,6 +772,27 @@ impl Database {
         ).unwrap_or(0);
 
         Ok((total_reviewed, today_reviewed, due_count))
+    }
+
+    pub fn get_review_history(&self, problem_id: i64) -> rusqlite::Result<Vec<ReviewRecord>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, confidence, reviewed_at
+             FROM reviews WHERE problem_id = ?1
+             ORDER BY id DESC"
+        )?;
+        let rows = stmt.query_map(params![problem_id], |row| {
+            Ok(ReviewRecord {
+                id: row.get(0)?,
+                confidence: row.get(1)?,
+                reviewed_at: row.get(2)?,
+            })
+        })?;
+        let mut result = Vec::new();
+        for row in rows {
+            result.push(row?);
+        }
+        Ok(result)
     }
 
     pub fn get_random_problem(&self) -> Result<Option<Problem>> {

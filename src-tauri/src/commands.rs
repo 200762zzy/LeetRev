@@ -11,6 +11,31 @@ pub fn get_tags(db: State<Database>) -> Result<Vec<Tag>, String> {
 }
 
 #[tauri::command]
+pub fn get_custom_api_entries(db: State<Database>) -> Result<Vec<CustomApiEntry>, String> {
+    db.get_custom_api_entries().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn get_custom_api_by_container(db: State<Database>, container: String) -> Result<Vec<CustomApiEntry>, String> {
+    db.get_custom_api_by_container(&container).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn create_custom_api(db: State<Database>, data: CreateCustomApiDTO) -> Result<CustomApiEntry, String> {
+    db.create_custom_api(&data).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn update_custom_api(db: State<Database>, id: i64, data: UpdateCustomApiDTO) -> Result<CustomApiEntry, String> {
+    db.update_custom_api(id, &data).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn delete_custom_api(db: State<Database>, id: i64) -> Result<(), String> {
+    db.delete_custom_api(id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub async fn fetch_problem_info(leetcode_id: i64) -> Result<scraper::FetchedProblemInfo, String> {
     scraper::fetch_problem_info(leetcode_id).await
 }
@@ -215,6 +240,11 @@ pub fn record_review(db: State<Database>, problem_id: i64, confidence: String) -
 pub fn get_review_stats(db: State<Database>) -> Result<ReviewStats, String> {
     let (total_reviewed, today_reviewed, due_count) = db.get_review_stats().map_err(|e| e.to_string())?;
     Ok(ReviewStats { total_reviewed, today_reviewed, due_count })
+}
+
+#[tauri::command]
+pub fn get_review_history(db: State<Database>, problem_id: i64) -> Result<Vec<ReviewRecord>, String> {
+    db.get_review_history(problem_id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
