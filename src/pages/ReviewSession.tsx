@@ -222,6 +222,7 @@ export function ReviewSession() {
           id: current.id,
           data: { notes: userNotes || null },
         })
+        setStage('reveal')
       } else {
         setSubmissionBlocked(true)
       }
@@ -469,28 +470,43 @@ export function ReviewSession() {
         </button>
       )}
 
-      <div className="card space-y-6">
-        <div className="flex items-center gap-3">
-          <span className="font-mono text-sm text-zinc-400">#{current.leetcode_id ?? '-'}</span>
-          <h2 className="text-xl font-bold text-zinc-900">{current.title}</h2>
-          {current.title_cn && (
-            <span className="text-sm text-zinc-400">/ {current.title_cn}</span>
-          )}
-          <span className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium ${difficultyColor(current.difficulty)}`}>
-            {current.difficulty}
-          </span>
-        </div>
+      <div className="flex gap-0">
+        <div className={`${scratchpadOpen ? 'w-1/3 min-w-0 overflow-y-auto' : 'w-full'}`}>
+          {scratchpadOpen ? (
+            <div className="card p-4">
+              {current.content && (
+                <div
+                  className="prose prose-sm max-w-none text-zinc-700 [&_pre]:rounded-lg [&_pre]:bg-zinc-100 [&_pre]:p-3 [&_code]:text-sm"
+                  dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(current.content) }}
+                />
+              )}
+              {!current.content && (
+                <p className="text-sm text-zinc-400">该题目暂无描述，请先在详情页抓取</p>
+              )}
+            </div>
+          ) : (
+            <div className="card space-y-6">
+              <div className="flex items-center gap-3">
+                <span className="font-mono text-sm text-zinc-400">#{current.leetcode_id ?? '-'}</span>
+                <h2 className="text-xl font-bold text-zinc-900">{current.title}</h2>
+                {current.title_cn && (
+                  <span className="text-sm text-zinc-400">/ {current.title_cn}</span>
+                )}
+                <span className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium ${difficultyColor(current.difficulty)}`}>
+                  {current.difficulty}
+                </span>
+              </div>
 
-        <div className="flex flex-wrap gap-1.5">
-          {current.tags.map((t) => (
-            <span
-              key={t.id}
-              className="inline-flex items-center rounded-full bg-zinc-100 px-2.5 py-1 text-xs font-medium text-zinc-600"
-            >
-              {t.name}
-            </span>
-          ))}
-        </div>
+              <div className="flex flex-wrap gap-1.5">
+                {current.tags.map((t) => (
+                  <span
+                    key={t.id}
+                    className="inline-flex items-center rounded-full bg-zinc-100 px-2.5 py-1 text-xs font-medium text-zinc-600"
+                  >
+                    {t.name}
+                  </span>
+                ))}
+              </div>
 
         <div className="border-t border-zinc-100 pt-4">
           {stage === 'recall' && (
@@ -617,6 +633,15 @@ export function ReviewSession() {
                           {submitResult.runtime && <p className="text-emerald-600">运行时间: {submitResult.runtime}</p>}
                           {submitResult.memory && <p className="text-emerald-600">内存: {submitResult.memory}</p>}
                           <p className="text-emerald-600 flex items-center gap-1"><CheckCircle className="h-3 w-3" /> 代码和心得已自动保存</p>
+                          <div className="pt-2">
+                            <button
+                              className="rounded-md px-3 py-1.5 text-xs font-medium bg-emerald-100 text-emerald-700 hover:bg-emerald-200 transition-colors"
+                              onClick={handleSkip}
+                            >
+                              <SkipForward className="mr-1 inline h-3 w-3" />
+                              下一题
+                            </button>
+                          </div>
                         </div>
                       )}
 
@@ -694,19 +719,26 @@ export function ReviewSession() {
                   <Eye className="h-4 w-4" />
                   查看对比
                 </button>
-                <button
-                  className="btn-ghost flex-none"
-                  onClick={handleSkip}
-                >
-                  <SkipForward className="h-4 w-4" />
-                  下一题
-                </button>
               </div>
             </div>
           )}
 
           {stage === 'reveal' && (
             <div className="space-y-4">
+              {submitResult && submitResult.status === 'Accepted' && (
+                <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3">
+                  <div className="flex items-center gap-2">
+                    <CheckCircle className="h-5 w-5 text-emerald-600" />
+                    <span className="text-sm font-semibold text-emerald-700">
+                      通过! ({submitResult.passed}/{submitResult.total})
+                    </span>
+                  </div>
+                  <div className="mt-1 space-y-0.5 text-xs text-emerald-600">
+                    {submitResult.runtime && <p>运行时间: {submitResult.runtime}</p>}
+                    {submitResult.memory && <p>内存: {submitResult.memory}</p>}
+                  </div>
+                </div>
+              )}
               {current.content && (
                 <div className="relative">
                   <div
@@ -803,15 +835,17 @@ export function ReviewSession() {
                   <p className="mt-2 text-center text-xs text-zinc-400">正在保存你的代码...</p>
                 )}
               </div>
-              <div className="text-center">
-                <button
-                  className="text-sm text-zinc-400 hover:text-zinc-600 underline"
-                  onClick={handleSkip}
-                >
-                  <SkipForward className="mr-1 inline h-3 w-3" />
-                  跳过 → 下一题
-                </button>
-              </div>
+              {submitResult?.status !== 'Accepted' && (
+                <div className="text-center">
+                  <button
+                    className="text-sm text-zinc-400 hover:text-zinc-600 underline"
+                    onClick={handleSkip}
+                  >
+                    <SkipForward className="mr-1 inline h-3 w-3" />
+                    跳过 → 下一题
+                  </button>
+                </div>
+              )}
             </div>
           )}
 
@@ -827,19 +861,25 @@ export function ReviewSession() {
             </div>
           )}
         </div>
-      </div>
-      <CustomApiForm
-        open={apiFormOpen}
-        onClose={() => setApiFormOpen(false)}
-        defaultLanguage={language === 'C++' ? 'cpp' : language === 'Java' ? 'java' : 'python'}
-        defaultProblemId={current?.id ?? null}
-        onSaved={() => {}}
-      />
-      <Scratchpad
-        open={scratchpadOpen}
-        onClose={() => setScratchpadOpen(false)}
-        problemId={current?.id ?? null}
-      />
+          </div>
+        )}
+        </div>
+      {scratchpadOpen && (
+        <div className="w-2/3 min-w-0 overflow-hidden border-l border-zinc-200" style={{ height: 'calc(100vh - 200px)' }}>
+          <Scratchpad
+            problemId={current?.id ?? null}
+            onClose={() => setScratchpadOpen(false)}
+          />
+        </div>
+      )}
     </div>
+    <CustomApiForm
+      open={apiFormOpen}
+      onClose={() => setApiFormOpen(false)}
+      defaultLanguage={language === 'C++' ? 'cpp' : language === 'Java' ? 'java' : 'python'}
+      defaultProblemId={current?.id ?? null}
+      onSaved={() => {}}
+    />
+  </div>
   )
 }

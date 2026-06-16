@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 
-type DrawTool = 'pen' | 'eraser' | 'rect' | 'ellipse' | 'line'
+type DrawTool = 'pen' | 'eraser' | 'rect' | 'ellipse' | 'line' | 'select'
 
 const PRESET_COLORS = [
   '#1e293b', '#ef4444', '#f97316', '#eab308',
@@ -29,6 +29,13 @@ export function CanvasDrawing({ value, onChange }: Props) {
   const startPoint = useRef<{ x: number; y: number } | null>(null)
   const undoStack = useRef<ImageData[]>([])
   const redoStack = useRef<ImageData[]>([])
+
+  const [selection, setSelection] = useState<{ x: number; y: number; w: number; h: number } | null>(null)
+  const selectedPixels = useRef<ImageData | null>(null)
+  const isMoving = useRef(false)
+  const moveStart = useRef<{ x: number; y: number } | null>(null)
+  const selectionRef = useRef<{ x: number; y: number; w: number; h: number } | null>(null)
+  const [cursorStyle, setCursorStyle] = useState('crosshair')
 
   const getCtx = useCallback(() => {
     return canvasRef.current?.getContext('2d') ?? null
@@ -76,16 +83,94 @@ export function CanvasDrawing({ value, onChange }: Props) {
     ctx.stroke()
   }, [getCtx])
 
+  const emitChange = useCallback(() => {
+    const canvas = canvasRef.current
+    if (canvas) onChange(canvas.toDataURL('image/png'))
+  }, [onChange])
+
+  const drawSelectionRect = useCallback((s: { x: number; y: number; w: number; h: number }) => {
+    const ctx = getCtx()
+    if (!ctx) return
+    ctx.save()
+    ctx.strokeStyle = '#3b82f6'
+    ctx.lineWidth = 2
+    ctx.setLineDash([6, 4])
+    ctx.strokeRect(s.x, s.y, s.w, s.h)
+    ctx.restore()
+  }, [getCtx])
+
+  const isInsideSelection = useCallback((pos: { x: number; y: number }, sel: { x: number; y: number; w: number; h: number }) => {
+    const pad = 8
+    return pos.x >= sel.x - pad && pos.x <= sel.x + sel.w + pad &&
+           pos.y >= sel.y - pad && pos.y <= sel.y + sel.h + pad
+  }, [])
+
   const startDraw = useCallback((pos: { x: number; y: number }) => {
+    if (tool === 'select') {
+      const sel = selectionRef.current
+      if (sel && isInsideSelection(pos, sel)) {
+        saveSnapshot()
+        const ctx = getCtx()
+        const canvas = canvasRef.current
+        if (!ctx || !canvas) return
+        const dpr = window.devicePixelRatio || 1
+        selectedPixels.current = ctx.getImageData(sel.x * dpr, sel.y * dpr, sel.w * dpr, sel.h * dpr)
+        ctx.fillStyle = '#ffffff'
+        ctx.fillRect(sel.x, sel.y, sel.w, sel.h)
+        isMoving.current = true
+        moveStart.current = pos
+        emitChange()
+      } else {
+        setSelection(null)
+        selectionRef.current = null
+        selectedPixels.current = null
+        saveSnapshot()
+        isDrawing.current = true
+        startPoint.current = pos
+        lastPoint.current = pos
+      }
+      return
+    }
     saveSnapshot()
     isDrawing.current = true
     lastPoint.current = pos
     startPoint.current = pos
-  }, [saveSnapshot])
+  }, [tool, getCtx, saveSnapshot, isInsideSelection, emitChange])
 
   const moveDraw = useCallback((pos: { x: number; y: number }) => {
-    if (!isDrawing.current) return
     const ctx = getCtx()
+    const canvas = canvasRef.current
+    if (!ctx || !canvas) return
+
+    if (tool === 'select') {
+      if (isMoving.current) {
+        const sel = selectionRef.current
+        const px = selectedPixels.current
+        if (!sel || !px || !moveStart.current) return
+        const dx = pos.x - moveStart.current.x
+        const dy = pos.y - moveStart.current.y
+        const lastSnap = undoStack.current[undoStack.current.length - 1]
+        if (lastSnap) ctx.putImageData(lastSnap, 0, 0)
+        const dpr = window.devicePixelRatio || 1
+        ctx.putImageData(px, (sel.x + dx) * dpr, (sel.y + dy) * dpr)
+        drawSelectionRect({ x: sel.x + dx, y: sel.y + dy, w: sel.w, h: sel.h })
+        return
+      }
+
+      if (isDrawing.current && startPoint.current) {
+        const lastSnap = undoStack.current[undoStack.current.length - 1]
+        if (lastSnap) ctx.putImageData(lastSnap, 0, 0)
+        const s = startPoint.current
+        const sx = Math.min(s.x, pos.x)
+        const sy = Math.min(s.y, pos.y)
+        const sw = Math.abs(pos.x - s.x)
+        const sh = Math.abs(pos.y - s.y)
+        drawSelectionRect({ x: sx, y: sy, w: sw, h: sh })
+      }
+      return
+    }
+
+    if (!isDrawing.current) return
     if (!ctx) return
 
     if (tool === 'pen') {
@@ -119,18 +204,49 @@ export function CanvasDrawing({ value, onChange }: Props) {
         ctx.stroke()
       }
     }
-  }, [getCtx, tool, strokeOpts, drawLine, eraserSize])
+  }, [getCtx, tool, strokeOpts, drawLine, eraserSize, drawSelectionRect])
 
   const endDraw = useCallback(() => {
+    if (tool === 'select') {
+      if (isMoving.current) {
+        isMoving.current = false
+        moveStart.current = null
+        const sel = selectionRef.current
+        setSelection(sel ? { ...sel } : null)
+        emitChange()
+        return
+      }
+      if (isDrawing.current && startPoint.current && lastPoint.current) {
+        isDrawing.current = false
+        const s = startPoint.current
+        const e = lastPoint.current
+        const sx = Math.min(s.x, e.x)
+        const sy = Math.min(s.y, e.y)
+        const sw = Math.abs(e.x - s.x)
+        const sh = Math.abs(e.y - s.y)
+        if (sw > 2 || sh > 2) {
+          const sel = { x: sx, y: sy, w: sw, h: sh }
+          setSelection(sel)
+          selectionRef.current = sel
+          const ctx = getCtx()
+          const canvas = canvasRef.current
+          if (ctx && canvas) {
+            const dpr = window.devicePixelRatio || 1
+            selectedPixels.current = ctx.getImageData(sx * dpr, sy * dpr, sw * dpr, sh * dpr)
+          }
+        }
+        startPoint.current = null
+        lastPoint.current = null
+        emitChange()
+      }
+      return
+    }
     if (!isDrawing.current) return
     isDrawing.current = false
     lastPoint.current = null
     startPoint.current = null
-    const canvas = canvasRef.current
-    if (canvas) {
-      onChange(canvas.toDataURL('image/png'))
-    }
-  }, [onChange])
+    emitChange()
+  }, [tool, getCtx, emitChange])
 
   const handleUndo = useCallback(() => {
     const ctx = getCtx()
@@ -142,8 +258,11 @@ export function CanvasDrawing({ value, onChange }: Props) {
     ctx.putImageData(snap, 0, 0)
     setUndoCount(undoStack.current.length)
     setRedoCount(redoStack.current.length)
-    onChange(canvas.toDataURL('image/png'))
-  }, [getCtx, onChange])
+    setSelection(null)
+    selectionRef.current = null
+    selectedPixels.current = null
+    emitChange()
+  }, [getCtx, emitChange])
 
   const handleRedo = useCallback(() => {
     const ctx = getCtx()
@@ -155,8 +274,11 @@ export function CanvasDrawing({ value, onChange }: Props) {
     ctx.putImageData(snap, 0, 0)
     setUndoCount(undoStack.current.length)
     setRedoCount(redoStack.current.length)
-    onChange(canvas.toDataURL('image/png'))
-  }, [getCtx, onChange])
+    setSelection(null)
+    selectionRef.current = null
+    selectedPixels.current = null
+    emitChange()
+  }, [getCtx, emitChange])
 
   const handleClear = useCallback(() => {
     const ctx = getCtx()
@@ -169,8 +291,11 @@ export function CanvasDrawing({ value, onChange }: Props) {
     const h = canvas.height / dpr
     ctx.fillStyle = '#ffffff'
     ctx.fillRect(0, 0, w, h)
-    onChange(canvas.toDataURL('image/png'))
-  }, [getCtx, saveSnapshot, onChange])
+    setSelection(null)
+    selectionRef.current = null
+    selectedPixels.current = null
+    emitChange()
+  }, [getCtx, saveSnapshot, emitChange])
 
   const handlePointerDown = useCallback((e: React.MouseEvent | React.TouchEvent) => {
     e.preventDefault()
@@ -189,11 +314,10 @@ export function CanvasDrawing({ value, onChange }: Props) {
   }, [startDraw, getPos])
 
   const handlePointerMove = useCallback((e: React.MouseEvent | React.TouchEvent) => {
-    if (!isDrawing.current) return
-    e.preventDefault()
     let clientX: number
     let clientY: number
     if ('touches' in e) {
+      if (!isDrawing.current && !isMoving.current) return
       const t = e.touches[0]
       if (!t) return
       clientX = t.clientX
@@ -202,13 +326,41 @@ export function CanvasDrawing({ value, onChange }: Props) {
       clientX = e.clientX
       clientY = e.clientY
     }
+    if (tool === 'select' && !isDrawing.current && !isMoving.current) {
+      const sel = selectionRef.current
+      if (sel && isInsideSelection(getPos({ clientX, clientY }), sel)) {
+        setCursorStyle('move')
+      } else {
+        setCursorStyle('crosshair')
+      }
+      return
+    }
     moveDraw(getPos({ clientX, clientY }))
-  }, [moveDraw, getPos])
+  }, [getPos, tool, isInsideSelection, moveDraw])
 
   const handlePointerUp = useCallback((e: React.MouseEvent | React.TouchEvent) => {
     e.preventDefault()
     endDraw()
   }, [endDraw])
+
+  const handlePointerLeave = useCallback(() => {
+    if (tool === 'select' && !isMoving.current) {
+      isDrawing.current = false
+    }
+    endDraw()
+  }, [tool, endDraw])
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setSelection(null)
+        selectionRef.current = null
+        selectedPixels.current = null
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [])
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -231,7 +383,6 @@ export function CanvasDrawing({ value, onChange }: Props) {
       img.onload = () => { ctx.drawImage(img, 0, 0, w, h) }
       img.src = value
     }
-    // value deliberately omitted — CanvasDrawing is remounted via key when problemId changes
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -268,6 +419,7 @@ export function CanvasDrawing({ value, onChange }: Props) {
         <button onClick={() => setTool('rect')} className={`rounded px-2 py-1 font-medium ${tool === 'rect' ? 'bg-primary-100 text-primary-700' : 'text-zinc-500 hover:bg-zinc-100'}`}>矩形</button>
         <button onClick={() => setTool('ellipse')} className={`rounded px-2 py-1 font-medium ${tool === 'ellipse' ? 'bg-primary-100 text-primary-700' : 'text-zinc-500 hover:bg-zinc-100'}`}>椭圆</button>
         <button onClick={() => setTool('line')} className={`rounded px-2 py-1 font-medium ${tool === 'line' ? 'bg-primary-100 text-primary-700' : 'text-zinc-500 hover:bg-zinc-100'}`}>直线</button>
+        <button onClick={() => setTool('select')} className={`rounded px-2 py-1 font-medium ${tool === 'select' ? 'bg-primary-100 text-primary-700' : 'text-zinc-500 hover:bg-zinc-100'}`}>框选</button>
         <div className="mx-1 h-4 w-px bg-zinc-200" />
 
         <button onClick={handleUndo} disabled={undoCount === 0} className="rounded px-2 py-1 text-zinc-500 hover:bg-zinc-100 disabled:opacity-30">撤销</button>
@@ -294,16 +446,28 @@ export function CanvasDrawing({ value, onChange }: Props) {
       <div className="flex-1 bg-zinc-100 p-2">
         <canvas
           ref={canvasRef}
-          className="h-full w-full rounded-lg bg-white shadow-sm cursor-crosshair"
-          style={{ touchAction: 'none' }}
+          className="h-full w-full rounded-lg bg-white shadow-sm"
+          style={{ touchAction: 'none', cursor: cursorStyle }}
           onMouseDown={handlePointerDown}
           onMouseMove={handlePointerMove}
           onMouseUp={handlePointerUp}
-          onMouseLeave={endDraw}
+          onMouseLeave={handlePointerLeave}
           onTouchStart={handlePointerDown}
           onTouchMove={handlePointerMove}
           onTouchEnd={handlePointerUp}
         />
+        {selection && (
+          <div
+            className="absolute border-2 border-dashed border-blue-500 pointer-events-none"
+            style={{
+              left: selection.x,
+              top: selection.y,
+              width: selection.w,
+              height: selection.h,
+              zIndex: 10,
+            }}
+          />
+        )}
       </div>
     </div>
   )
