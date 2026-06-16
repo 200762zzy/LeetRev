@@ -1,6 +1,7 @@
 import { useMemo } from 'react'
 import CodeMirror from '@uiw/react-codemirror'
 import { oneDark } from '@codemirror/theme-one-dark'
+import { EditorView } from '@codemirror/view'
 import { python } from '@codemirror/lang-python'
 import { java } from '@codemirror/lang-java'
 import { cpp } from '@codemirror/lang-cpp'
@@ -34,7 +35,7 @@ interface Props {
 }
 
 export function CodeEditor({ code, language, onChange, editable = true }: Props) {
-  const ext = useMemo(() => [extensions[language] || javascript()], [language])
+  const ext = useMemo(() => [extensions[language] || javascript(), EditorView.lineWrapping], [language])
 
   return (
     <CodeMirror

@@ -1,9 +1,9 @@
 import { useEffect, useState, useCallback } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { invoke } from '@tauri-apps/api/core'
-import { ArrowLeft, Eye, Loader2, ThumbsUp, Meh, ThumbsDown, CheckCircle, BookOpen, BookMarked, Maximize2, Minimize2, Send, X, AlertTriangle, FileText } from 'lucide-react'
+import { ArrowLeft, Eye, Loader2, ThumbsUp, Meh, ThumbsDown, CheckCircle, BookOpen, BookMarked, Maximize2, Minimize2, Send, X, AlertTriangle, FileText, SkipForward } from 'lucide-react'
 import DOMPurify from 'dompurify'
-import type { Problem, CodeLanguage, CodeSnippet, CodeTemplate, SubmissionResult } from '../types'
+import type { Problem, CodeLanguage, CodeSnippet, CodeTemplate, SubmissionResult, Tag, TagDueCount } from '../types'
 import { LANGUAGES } from '../types'
 import { difficultyColor } from '../lib/utils'
 import { CodeEditor } from '../components/CodeEditor'
@@ -14,6 +14,12 @@ type ReviewStage = 'recall' | 'reveal' | 'rated'
 
 export function ReviewSession() {
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+  const tagIdParam = searchParams.get('tagId')
+  const tagId = tagIdParam ? Number(tagIdParam) : null
+  const problemIdParam = searchParams.get('problemId')
+  const problemId = problemIdParam ? Number(problemIdParam) : null
+
   const [queue, setQueue] = useState<Problem[]>([])
   const [index, setIndex] = useState(0)
   const [stage, setStage] = useState<ReviewStage>('recall')
@@ -36,11 +42,26 @@ export function ReviewSession() {
   const [submitting, setSubmitting] = useState(false)
   const [submitResult, setSubmitResult] = useState<SubmissionResult | null>(null)
   const [submissionBlocked, setSubmissionBlocked] = useState(false)
+  const [tab, setTab] = useState<'system' | 'column'>(tagId ? 'column' : 'system')
+  const [selectedTagId, setSelectedTagId] = useState<number | null>(tagId)
+  const [selectedTagName, setSelectedTagName] = useState('')
+  const [tagDueCounts, setTagDueCounts] = useState<TagDueCount[]>([])
+  const [columnLoading, setColumnLoading] = useState(false)
 
-  const loadQueue = useCallback(async () => {
+  const loadQueue = useCallback(async (tid: number | null, pid: number | null) => {
     setLoading(true)
     try {
-      const data = await invoke<Problem[]>('get_review_queue')
+      let data = await invoke<Problem[]>('get_review_queue', { tagId: tid })
+      if (pid != null) {
+        const idx = data.findIndex(p => p.id === pid)
+        if (idx > 0) {
+          const [item] = data.splice(idx, 1)
+          data.unshift(item)
+        } else if (idx === -1) {
+          const p = await invoke<Problem>('get_problem', { id: pid })
+          data.unshift(p)
+        }
+      }
       setQueue(data)
     } catch (e) {
       console.error(e)
@@ -49,8 +70,42 @@ export function ReviewSession() {
   }, [])
 
   useEffect(() => {
-    loadQueue()
-  }, [loadQueue])
+    if (tab === 'system') {
+      setCompleted(false)
+      setIndex(0)
+      loadQueue(null, problemId)
+    } else if (selectedTagId != null) {
+      setCompleted(false)
+      setIndex(0)
+      loadQueue(selectedTagId, problemId)
+    }
+  }, [loadQueue, tab, selectedTagId, problemId])
+
+  useEffect(() => {
+    if (tab === 'column' && selectedTagId) {
+      invoke<Tag[]>('get_tags').then(tags => {
+        const t = tags.find(t => t.id === selectedTagId)
+        if (t) setSelectedTagName(t.name)
+      })
+    }
+  }, [tab, selectedTagId])
+
+  const loadTagDueCounts = useCallback(async () => {
+    setColumnLoading(true)
+    try {
+      const data = await invoke<TagDueCount[]>('get_tag_due_counts')
+      setTagDueCounts(data)
+    } catch (e) {
+      console.error(e)
+    }
+    setColumnLoading(false)
+  }, [])
+
+  useEffect(() => {
+    if (tab === 'column' && !selectedTagId) {
+      loadTagDueCounts()
+    }
+  }, [tab, selectedTagId, loadTagDueCounts])
 
   useEffect(() => {
     invoke<string | null>('get_setting', { key: 'leetcode_session' }).then(v => {
@@ -138,6 +193,15 @@ export function ReviewSession() {
     setSaving(false)
   }
 
+  const handleSkip = () => {
+    if (index + 1 < queue.length) {
+      setIndex(index + 1)
+      setStage('recall')
+    } else {
+      setCompleted(true)
+    }
+  }
+
   const handleSubmitCode = async () => {
     if (!current?.leetcode_id) return
     setSubmitting(true)
@@ -179,63 +243,231 @@ export function ReviewSession() {
     setSubmitResult(null)
   }
 
+  const showColumnGrid = tab === 'column' && selectedTagId == null
+  const tid = tab === 'column' ? selectedTagId : null
+
+  const TabBar = (
+    <div className="flex gap-1 rounded-lg bg-zinc-100 p-1 w-fit">
+      <button
+        className={`rounded-md px-4 py-1.5 text-sm font-medium transition-colors ${
+          tab === 'system' ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-700'
+        }`}
+        onClick={() => {
+          if (tab !== 'system') {
+            setTab('system')
+            setSelectedTagId(null)
+            setSelectedTagName('')
+            setCompleted(false)
+            setIndex(0)
+          }
+        }}
+      >
+        系统复习
+      </button>
+      <button
+        className={`rounded-md px-4 py-1.5 text-sm font-medium transition-colors ${
+          tab === 'column' ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-700'
+        }`}
+        onClick={() => {
+          if (tab !== 'column') {
+            setTab('column')
+            setSelectedTagId(null)
+            setSelectedTagName('')
+            setCompleted(false)
+            setQueue([])
+          }
+        }}
+      >
+        专栏复习
+      </button>
+    </div>
+  )
+
+  // Column grid view
+  if (showColumnGrid) {
+    return (
+      <div className="mx-auto max-w-4xl space-y-6">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <button className="btn-ghost p-1.5" onClick={() => navigate(-1)}>
+              <ArrowLeft className="h-5 w-5" />
+            </button>
+            <h1 className="text-xl font-bold text-zinc-900">专栏复习</h1>
+          </div>
+          {TabBar}
+        </div>
+        {columnLoading ? (
+          <div className="flex items-center justify-center py-20">
+            <Loader2 className="h-6 w-6 animate-spin text-primary-600" />
+          </div>
+        ) : tagDueCounts.length === 0 ? (
+          <div className="mx-auto max-w-lg space-y-6 py-20 text-center">
+            <CheckCircle className="mx-auto h-16 w-16 text-zinc-300" />
+            <h1 className="text-2xl font-bold text-zinc-900">暂无专栏</h1>
+            <p className="text-zinc-500">请先在题目管理中添加标签</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {tagDueCounts.map((t) => (
+              <button
+                key={t.id}
+                className="card text-left transition-all hover:shadow-md active:scale-[0.98]"
+                onClick={() => {
+                  setSelectedTagId(t.id)
+                  setSelectedTagName(t.name)
+                }}
+              >
+                <div className="flex items-center gap-3">
+                  <div
+                    className="h-4 w-4 rounded-full flex-shrink-0"
+                    style={{ backgroundColor: t.color }}
+                  />
+                  <span className="font-medium text-zinc-900">{t.name}</span>
+                </div>
+                <p className="mt-2 text-sm text-zinc-500">
+                  待复习 <span className="font-semibold text-primary-600">{t.due_count}</span> 题
+                </p>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  // Loading state
   if (loading) {
     return (
-      <div className="flex items-center justify-center py-20">
-        <Loader2 className="h-6 w-6 animate-spin text-primary-600" />
+      <div className="mx-auto max-w-6xl space-y-6">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <button className="btn-ghost p-1.5" onClick={() => navigate(-1)}>
+              <ArrowLeft className="h-5 w-5" />
+            </button>
+            <h1 className="text-xl font-bold text-zinc-900">
+              {tab === 'column' ? `${selectedTagName} 专栏复习` : '系统复习'}
+            </h1>
+          </div>
+          {TabBar}
+        </div>
+        <div className="flex items-center justify-center py-20">
+          <Loader2 className="h-6 w-6 animate-spin text-primary-600" />
+        </div>
       </div>
     )
   }
 
+  // Completed state
   if (completed) {
     return (
-      <div className="mx-auto max-w-lg space-y-6 py-20 text-center">
-        <CheckCircle className="mx-auto h-16 w-16 text-emerald-500" />
-        <h1 className="text-2xl font-bold text-zinc-900">复习完成！</h1>
-        <p className="text-zinc-500">本次复习了 {queue.length} 道题目</p>
-        <div className="flex items-center justify-center gap-3">
-          <button className="btn-primary" onClick={loadQueue}>
-            <BookOpen className="h-4 w-4" />
-            继续复习
-          </button>
-          <button className="btn-secondary" onClick={() => navigate('/')}>
-            回到首页
-          </button>
+      <div className="mx-auto max-w-6xl space-y-6">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <button className="btn-ghost p-1.5" onClick={() => navigate(-1)}>
+              <ArrowLeft className="h-5 w-5" />
+            </button>
+            <h1 className="text-xl font-bold text-zinc-900">
+              {tab === 'column' ? `${selectedTagName} 专栏复习` : '系统复习'}
+            </h1>
+          </div>
+          {TabBar}
+        </div>
+        <div className="mx-auto max-w-lg space-y-6 py-20 text-center">
+          <CheckCircle className="mx-auto h-16 w-16 text-emerald-500" />
+          <h1 className="text-2xl font-bold text-zinc-900">复习完成！</h1>
+          <p className="text-zinc-500">本次复习了 {queue.length} 道题目</p>
+          <div className="flex items-center justify-center gap-3">
+            <button className="btn-primary" onClick={() => loadQueue(tid, null)}>
+              <BookOpen className="h-4 w-4" />
+              继续复习
+            </button>
+            {tab === 'column' && (
+              <button className="btn-secondary" onClick={() => {
+                setSelectedTagId(null)
+                setSelectedTagName('')
+              }}>
+                返回专栏列表
+              </button>
+            )}
+            <button className="btn-secondary" onClick={() => navigate('/')}>
+              回到首页
+            </button>
+          </div>
         </div>
       </div>
     )
   }
 
+  // Empty queue
   if (queue.length === 0) {
     return (
-      <div className="mx-auto max-w-lg space-y-6 py-20 text-center">
-        <CheckCircle className="mx-auto h-16 w-16 text-zinc-300" />
-        <h1 className="text-2xl font-bold text-zinc-900">没有待复习的题目</h1>
-        <p className="text-zinc-500">所有题目都已按计划复习过了，明天再来吧</p>
-        <button className="btn-secondary" onClick={() => navigate('/')}>
-          回到首页
-        </button>
+      <div className="mx-auto max-w-6xl space-y-6">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <button className="btn-ghost p-1.5" onClick={() => navigate(-1)}>
+              <ArrowLeft className="h-5 w-5" />
+            </button>
+            <h1 className="text-xl font-bold text-zinc-900">
+              {tab === 'column' ? `${selectedTagName} 专栏复习` : '系统复习'}
+            </h1>
+          </div>
+          {TabBar}
+        </div>
+        <div className="mx-auto max-w-lg space-y-6 py-20 text-center">
+          <CheckCircle className="mx-auto h-16 w-16 text-zinc-300" />
+          <h1 className="text-2xl font-bold text-zinc-900">没有待复习的题目</h1>
+          <p className="text-zinc-500">所有题目都已按计划复习过了，明天再来吧</p>
+          <div className="flex items-center justify-center gap-3">
+            {tab === 'column' && (
+              <button className="btn-secondary" onClick={() => {
+                setSelectedTagId(null)
+                setSelectedTagName('')
+              }}>
+                返回专栏列表
+              </button>
+            )}
+            <button className="btn-secondary" onClick={() => navigate('/')}>
+              回到首页
+            </button>
+          </div>
+        </div>
       </div>
     )
   }
 
+  // Active review
   return (
     <div className="mx-auto max-w-6xl space-y-6">
-      <div className="flex items-center gap-4">
-        <button className="btn-ghost p-1.5" onClick={() => navigate('/')}>
-          <ArrowLeft className="h-5 w-5" />
-        </button>
-        <div className="flex-1">
-          <h1 className="text-xl font-bold text-zinc-900">复习模式</h1>
-          <p className="text-sm text-zinc-500">第 {index + 1}/{queue.length} 题</p>
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-4">
+          <button className="btn-ghost p-1.5" onClick={() => navigate(-1)}>
+            <ArrowLeft className="h-5 w-5" />
+          </button>
+          <div className="flex-1">
+            <h1 className="text-xl font-bold text-zinc-900">
+              {tab === 'column' ? `${selectedTagName} 专栏复习` : '系统复习'}
+            </h1>
+            <p className="text-sm text-zinc-500">第 {index + 1}/{queue.length} 题</p>
+          </div>
+          <div className="h-2 w-32 overflow-hidden rounded-full bg-zinc-200">
+            <div
+              className="h-full rounded-full bg-primary-500 transition-all duration-300"
+              style={{ width: `${((index + 1) / queue.length) * 100}%` }}
+            />
+          </div>
         </div>
-        <div className="h-2 w-32 overflow-hidden rounded-full bg-zinc-200">
-          <div
-            className="h-full rounded-full bg-primary-500 transition-all duration-300"
-            style={{ width: `${((index + 1) / queue.length) * 100}%` }}
-          />
-        </div>
+        {TabBar}
       </div>
+
+      {tab === 'column' && (
+        <button
+          className="flex items-center gap-1 text-sm text-zinc-400 hover:text-zinc-600"
+          onClick={() => { setSelectedTagId(null); setSelectedTagName('') }}
+        >
+          <ArrowLeft className="h-3 w-3" />
+          返回专栏列表
+        </button>
+      )}
 
       <div className="card space-y-6">
         <div className="flex items-center gap-3">
@@ -462,6 +694,13 @@ export function ReviewSession() {
                   <Eye className="h-4 w-4" />
                   查看对比
                 </button>
+                <button
+                  className="btn-ghost flex-none"
+                  onClick={handleSkip}
+                >
+                  <SkipForward className="h-4 w-4" />
+                  下一题
+                </button>
               </div>
             </div>
           )}
@@ -563,6 +802,15 @@ export function ReviewSession() {
                 {savingCode && (
                   <p className="mt-2 text-center text-xs text-zinc-400">正在保存你的代码...</p>
                 )}
+              </div>
+              <div className="text-center">
+                <button
+                  className="text-sm text-zinc-400 hover:text-zinc-600 underline"
+                  onClick={handleSkip}
+                >
+                  <SkipForward className="mr-1 inline h-3 w-3" />
+                  跳过 → 下一题
+                </button>
               </div>
             </div>
           )}

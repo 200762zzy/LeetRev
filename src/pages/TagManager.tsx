@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { invoke } from '@tauri-apps/api/core'
-import { Plus, Trash2, Pencil, Check, X, Loader2 } from 'lucide-react'
+import { Plus, Trash2, Pencil, Check, X, Loader2, BookOpen } from 'lucide-react'
 import type { Tag } from '../types'
 
 export function TagManager() {
+  const navigate = useNavigate()
   const [tags, setTags] = useState<Tag[]>([])
   const [loading, setLoading] = useState(true)
   const [newName, setNewName] = useState('')
@@ -125,6 +127,13 @@ export function TagManager() {
                         title="编辑"
                       >
                         <Pencil className="h-4 w-4" />
+                      </button>
+                      <button
+                        className="btn-ghost p-1.5 text-primary-600 hover:bg-primary-50 hover:text-primary-700"
+                        onClick={() => navigate(`/review?tagId=${tag.id}`)}
+                        title="复习此标签"
+                      >
+                        <BookOpen className="h-4 w-4" />
                       </button>
                       <button
                         className="btn-ghost p-1.5 text-red-500 hover:bg-red-50 hover:text-red-600"

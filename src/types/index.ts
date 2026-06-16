@@ -61,6 +61,13 @@ export interface TagStats {
   rate: number
 }
 
+export interface TagDueCount {
+  id: number
+  name: string
+  color: string
+  due_count: number
+}
+
 export interface CodeSnippet {
   id: number
   problem_id: number

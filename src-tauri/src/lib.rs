@@ -48,6 +48,7 @@ pub fn run() {
             commands::sync_leetcode_progress,
             commands::get_review_queue,
             commands::record_review,
+            commands::get_tag_due_counts,
             commands::get_review_stats,
             commands::get_review_history,
             commands::get_random_problem,

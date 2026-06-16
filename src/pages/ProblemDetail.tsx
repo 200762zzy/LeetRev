@@ -119,7 +119,7 @@ export function ProblemDetail() {
             </button>
           </div>
         </div>
-        <button className="btn-primary" onClick={() => navigate('/review')}>
+        <button className="btn-primary" onClick={() => navigate(`/review?problemId=${id}`)}>
           <Target className="h-4 w-4" />
           去复习
         </button>

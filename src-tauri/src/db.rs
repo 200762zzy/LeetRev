@@ -219,6 +219,37 @@ impl Database {
         Ok(tags)
     }
 
+    pub fn get_tag_due_counts(&self) -> Result<Vec<TagDueCount>> {
+        let conn = self.conn.lock().unwrap();
+        let sql = r#"
+            SELECT t.id, t.name, t.color,
+                   COUNT(DISTINCT p.id) FILTER (
+                       WHERE (
+                           (SELECT COUNT(*) FROM reviews r WHERE r.problem_id = p.id) = 0
+                           OR (
+                               (SELECT next_review FROM reviews r WHERE r.problem_id = p.id ORDER BY id DESC LIMIT 1)
+                               <= datetime('now','localtime')
+                           )
+                       )
+                   ) as due_count
+            FROM tags t
+            JOIN problem_tags pt ON pt.tag_id = t.id
+            JOIN problems p ON p.id = pt.problem_id
+            GROUP BY t.id
+            ORDER BY due_count DESC, t.name
+        "#;
+        let mut stmt = conn.prepare(sql)?;
+        let result = stmt.query_map([], |row| {
+            Ok(TagDueCount {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                color: row.get(2)?,
+                due_count: row.get(3)?,
+            })
+        })?.filter_map(|r| r.ok()).collect();
+        Ok(result)
+    }
+
     pub fn create_tag(&self, name: &str, color: &str) -> Result<Tag> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
@@ -327,6 +358,7 @@ impl Database {
             ],
         )?;
         let id = conn.last_insert_rowid();
+        drop(conn);
         self.get_custom_api_by_id(id)
     }
 
@@ -698,15 +730,22 @@ impl Database {
         Ok(())
     }
 
-    pub fn get_review_queue(&self) -> Result<Vec<Problem>> {
+    pub fn get_review_queue(&self, tag_id: Option<i64>) -> Result<Vec<Problem>> {
         let conn = self.conn.lock().unwrap();
-        // Problems never reviewed OR past due based on SM-2 next_review
-        let sql = "
-            SELECT p.id, p.leetcode_id, p.title, p.title_cn, p.difficulty, p.status,
-                   p.leetcode_url, p.notes, p.content, p.solution_code, p.code_language,
-                   p.created_at, p.updated_at
-            FROM problems p
-            WHERE (
+        let mut sql = String::from(
+            "SELECT p.id, p.leetcode_id, p.title, p.title_cn, p.difficulty, p.status,
+                    p.leetcode_url, p.notes, p.content, p.solution_code, p.code_language,
+                    p.created_at, p.updated_at
+             FROM problems p"
+        );
+        let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+        if let Some(tid) = tag_id {
+            let idx = param_values.len() + 1;
+            sql.push_str(&format!(" JOIN problem_tags pt ON p.id = pt.problem_id AND pt.tag_id = ?{}", idx));
+            param_values.push(Box::new(tid));
+        }
+        sql.push_str(
+            " WHERE (
                 (SELECT COUNT(*) FROM reviews r WHERE r.problem_id = p.id) = 0
                 OR (
                     (SELECT next_review FROM reviews r WHERE r.problem_id = p.id ORDER BY id DESC LIMIT 1)
@@ -715,10 +754,11 @@ impl Database {
             )
             ORDER BY
                 (SELECT next_review FROM reviews r WHERE r.problem_id = p.id ORDER BY id DESC LIMIT 1) IS NULL DESC,
-                (SELECT next_review FROM reviews r WHERE r.problem_id = p.id ORDER BY id DESC LIMIT 1) ASC
-        ";
-        let mut stmt = conn.prepare(sql)?;
-        let problems = stmt.query_map([], |row| {
+                (SELECT next_review FROM reviews r WHERE r.problem_id = p.id ORDER BY id DESC LIMIT 1) ASC"
+        );
+        let params_refs: Vec<&dyn rusqlite::types::ToSql> = param_values.iter().map(|p| p.as_ref()).collect();
+        let mut stmt = conn.prepare(&sql)?;
+        let problems = stmt.query_map(params_refs.as_slice(), |row| {
             Ok(Problem {
                 id: row.get(0)?,
                 leetcode_id: row.get(1)?,

@@ -11,6 +11,11 @@ pub fn get_tags(db: State<Database>) -> Result<Vec<Tag>, String> {
 }
 
 #[tauri::command]
+pub fn get_tag_due_counts(db: State<Database>) -> Result<Vec<TagDueCount>, String> {
+    db.get_tag_due_counts().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub fn get_custom_api_entries(db: State<Database>) -> Result<Vec<CustomApiEntry>, String> {
     db.get_custom_api_entries().map_err(|e| e.to_string())
 }
@@ -227,8 +232,8 @@ pub fn refresh_submission_stats(
 }
 
 #[tauri::command]
-pub fn get_review_queue(db: State<Database>) -> Result<Vec<Problem>, String> {
-    db.get_review_queue().map_err(|e| e.to_string())
+pub fn get_review_queue(db: State<Database>, tag_id: Option<i64>) -> Result<Vec<Problem>, String> {
+    db.get_review_queue(tag_id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]

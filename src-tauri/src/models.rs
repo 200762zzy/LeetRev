@@ -88,6 +88,14 @@ pub struct TagStats {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TagDueCount {
+    pub id: i64,
+    pub name: String,
+    pub color: String,
+    pub due_count: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CodeSnippet {
     pub id: i64,
     pub problem_id: i64,
