@@ -242,3 +242,37 @@ export interface UpdateCustomApiDTO {
   see_also?: string
   problem_id?: number | null
 }
+
+export interface SolutionApproach {
+  id: number
+  problem_id: number
+  title: string
+  description: string
+  language: CodeLanguage
+  code: string
+  time_complexity: string
+  space_complexity: string
+  sort_order: number
+  created_at: string
+  updated_at: string
+}
+
+export interface CreateSolutionApproachDTO {
+  problem_id: number
+  title: string
+  description?: string
+  language?: CodeLanguage
+  code?: string
+  time_complexity?: string
+  space_complexity?: string
+}
+
+export interface UpdateSolutionApproachDTO {
+  title?: string
+  description?: string
+  language?: CodeLanguage
+  code?: string
+  time_complexity?: string
+  space_complexity?: string
+  sort_order?: number
+}

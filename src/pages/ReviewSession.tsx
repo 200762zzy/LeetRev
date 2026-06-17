@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { invoke } from '@tauri-apps/api/core'
 import { ArrowLeft, Eye, Loader2, ThumbsUp, Meh, ThumbsDown, CheckCircle, BookOpen, BookMarked, Maximize2, Minimize2, Send, X, AlertTriangle, FileText, SkipForward } from 'lucide-react'
 import DOMPurify from 'dompurify'
-import type { Problem, CodeLanguage, CodeSnippet, CodeTemplate, SubmissionResult, Tag, TagDueCount } from '../types'
+import type { Problem, CodeLanguage, CodeSnippet, CodeTemplate, SubmissionResult, Tag, TagDueCount, SolutionApproach } from '../types'
 import { LANGUAGES } from '../types'
 import { difficultyColor } from '../lib/utils'
 import { CodeEditor } from '../components/CodeEditor'
@@ -47,6 +47,7 @@ export function ReviewSession() {
   const [selectedTagName, setSelectedTagName] = useState('')
   const [tagDueCounts, setTagDueCounts] = useState<TagDueCount[]>([])
   const [columnLoading, setColumnLoading] = useState(false)
+  const [approaches, setApproaches] = useState<SolutionApproach[]>([])
 
   const loadQueue = useCallback(async (tid: number | null, pid: number | null) => {
     setLoading(true)
@@ -155,6 +156,13 @@ export function ReviewSession() {
         .then((v) => { tplsResult = v; checkDone() })
         .catch(() => { tplsResult = []; checkDone() })
     }
+  }, [current?.id])
+
+  useEffect(() => {
+    if (!current?.id) return
+    invoke<SolutionApproach[]>('get_solution_approaches', { problemId: current.id })
+      .then(setApproaches)
+      .catch(() => setApproaches([]))
   }, [current?.id])
 
   const handleReveal = () => {
@@ -797,6 +805,32 @@ export function ReviewSession() {
                           code={s.code}
                           language={s.language as CodeLanguage}
                         />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {approaches.length > 0 && (
+                <div>
+                  <h3 className="mb-2 text-sm font-semibold text-zinc-900">多解法参考</h3>
+                  <div className="space-y-3">
+                    {approaches.map((a) => (
+                      <div key={a.id} className="rounded-lg border border-zinc-100 p-3">
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm font-medium text-zinc-900">{a.title}</span>
+                          {(a.time_complexity || a.space_complexity) && (
+                            <span className="text-xs text-zinc-400">
+                              {a.time_complexity}{a.time_complexity && a.space_complexity && ' / '}{a.space_complexity}
+                            </span>
+                          )}
+                        </div>
+                        {a.description && <p className="mt-1 text-xs text-zinc-500">{a.description}</p>}
+                        {a.code && (
+                          <div className="mt-2">
+                            <CodeEditor code={a.code} language={a.language as CodeLanguage} />
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>

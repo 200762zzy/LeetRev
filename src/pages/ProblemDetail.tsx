@@ -2,10 +2,11 @@ import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { invoke } from '@tauri-apps/api/core'
 import DOMPurify from 'dompurify'
-import { ArrowLeft, Loader2, RefreshCw, History, Target, BookOpen } from 'lucide-react'
-import type { Problem, CodeSnippet, ReviewRecord } from '../types'
+import { ArrowLeft, Loader2, RefreshCw, History, Target, BookOpen, Plus, Pencil, Trash2, ChevronUp, ChevronDown } from 'lucide-react'
+import type { Problem, CodeSnippet, ReviewRecord, SolutionApproach } from '../types'
 import { difficultyColor } from '../lib/utils'
 import { CodeEditor } from '../components/CodeEditor'
+import { SolutionForm } from '../components/SolutionForm'
 
 export function ProblemDetail() {
   const navigate = useNavigate()
@@ -13,6 +14,9 @@ export function ProblemDetail() {
   const [problem, setProblem] = useState<Problem | null>(null)
   const [snippets, setSnippets] = useState<CodeSnippet[]>([])
   const [reviews, setReviews] = useState<ReviewRecord[]>([])
+  const [solutions, setSolutions] = useState<SolutionApproach[]>([])
+  const [solutionFormOpen, setSolutionFormOpen] = useState(false)
+  const [editingSolution, setEditingSolution] = useState<SolutionApproach | null>(null)
   const [loading, setLoading] = useState(true)
   const [fetchingContent, setFetchingContent] = useState(false)
 
@@ -23,15 +27,45 @@ export function ProblemDetail() {
       invoke<Problem>('get_problem', { id: Number(id) }),
       invoke<CodeSnippet[]>('get_code_snippets', { problemId: Number(id) }),
       invoke<ReviewRecord[]>('get_review_history', { problemId: Number(id) }),
+      invoke<SolutionApproach[]>('get_solution_approaches', { problemId: Number(id) }),
     ])
-      .then(([p, snips, rvs]) => {
+      .then(([p, snips, rvs, sols]) => {
         setProblem(p)
         setSnippets(snips)
         setReviews(rvs)
+        setSolutions(sols)
       })
       .catch(console.error)
       .finally(() => setLoading(false))
   }, [id])
+
+  const loadSolutions = () => {
+    if (!id) return
+    invoke<SolutionApproach[]>('get_solution_approaches', { problemId: Number(id) })
+      .then(setSolutions)
+      .catch(console.error)
+  }
+
+  const handleDeleteSolution = async (solutionId: number) => {
+    if (!confirm('确定删除此解法？')) return
+    try {
+      await invoke('delete_solution_approach', { id: solutionId })
+      loadSolutions()
+    } catch (e) { console.error(e) }
+  }
+
+  const handleMoveSolution = async (index: number, direction: -1 | 1) => {
+    const newSolutions = [...solutions]
+    const target = index + direction
+    if (target < 0 || target >= newSolutions.length) return
+    ;[newSolutions[index], newSolutions[target]] = [newSolutions[target], newSolutions[index]]
+    const ids = newSolutions.map(s => s.id)
+    const orders = newSolutions.map((_, i) => i)
+    try {
+      await invoke('reorder_solution_approaches', { ids, orders })
+      setSolutions(newSolutions)
+    } catch (e) { console.error(e) }
+  }
 
   const handleFetchContent = async () => {
     if (!id || !problem?.leetcode_id) return
@@ -208,7 +242,63 @@ export function ProblemDetail() {
             </div>
           )}
 
-          {snippets.length === 0 && !problem.notes && reviews.length === 0 && (
+          <div className="card space-y-3">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-zinc-900">多解法</h3>
+              <button className="btn-ghost text-xs px-2 py-1" onClick={() => { setEditingSolution(null); setSolutionFormOpen(true) }}>
+                <Plus className="h-3 w-3" />
+                添加解法
+              </button>
+            </div>
+            {solutions.length === 0 ? (
+              <p className="text-sm text-zinc-400">暂无解法，点击「添加解法」创建</p>
+            ) : (
+              <div className="space-y-3">
+                {solutions.map((sol, i) => (
+                  <div key={sol.id} className="rounded-lg border border-zinc-100 p-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <div className="flex flex-col gap-0.5">
+                          <button className="text-zinc-300 hover:text-zinc-600 disabled:opacity-20" disabled={i === 0} onClick={() => handleMoveSolution(i, -1)}>
+                            <ChevronUp className="h-3 w-3" />
+                          </button>
+                          <button className="text-zinc-300 hover:text-zinc-600 disabled:opacity-20" disabled={i === solutions.length - 1} onClick={() => handleMoveSolution(i, 1)}>
+                            <ChevronDown className="h-3 w-3" />
+                          </button>
+                        </div>
+                        <span className="text-sm font-medium text-zinc-900">{sol.title}</span>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        {(sol.time_complexity || sol.space_complexity) && (
+                          <span className="text-xs text-zinc-400">
+                            {sol.time_complexity && <span>{sol.time_complexity}</span>}
+                            {sol.time_complexity && sol.space_complexity && <span> / </span>}
+                            {sol.space_complexity && <span>{sol.space_complexity}</span>}
+                          </span>
+                        )}
+                        <button className="rounded p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-600" onClick={() => { setEditingSolution(sol); setSolutionFormOpen(true) }}>
+                          <Pencil className="h-3 w-3" />
+                        </button>
+                        <button className="rounded p-1 text-zinc-400 hover:bg-zinc-100 hover:text-red-500" onClick={() => handleDeleteSolution(sol.id)}>
+                          <Trash2 className="h-3 w-3" />
+                        </button>
+                      </div>
+                    </div>
+                    {sol.description && (
+                      <p className="mt-1 text-xs text-zinc-500">{sol.description}</p>
+                    )}
+                    {sol.code && (
+                      <div className="mt-2">
+                        <CodeEditor code={sol.code} language={sol.language as any} editable={false} />
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {solutions.length === 0 && snippets.length === 0 && !problem.notes && reviews.length === 0 && (
             <div className="card py-12 text-center">
               <BookOpen className="mx-auto h-8 w-8 text-zinc-300" />
               <p className="mt-2 text-sm text-zinc-400">暂无复习记录</p>
@@ -217,6 +307,16 @@ export function ProblemDetail() {
           )}
         </div>
       </div>
+
+      {solutionFormOpen && (
+        <SolutionForm
+          problemId={Number(id!)}
+          leetcodeId={problem?.leetcode_id}
+          existing={editingSolution}
+          onSaved={() => loadSolutions()}
+          onClose={() => setSolutionFormOpen(false)}
+        />
+      )}
     </div>
   )
 }

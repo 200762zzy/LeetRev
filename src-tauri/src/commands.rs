@@ -268,6 +268,31 @@ pub fn update_scratchpad(db: State<Database>, problem_id: i64, content: String) 
 }
 
 #[tauri::command]
+pub fn get_solution_approaches(db: State<Database>, problem_id: i64) -> Result<Vec<SolutionApproach>, String> {
+    db.get_solution_approaches(problem_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn create_solution_approach(db: State<Database>, data: CreateSolutionApproachDTO) -> Result<SolutionApproach, String> {
+    db.create_solution_approach(&data).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn update_solution_approach(db: State<Database>, id: i64, data: UpdateSolutionApproachDTO) -> Result<SolutionApproach, String> {
+    db.update_solution_approach(id, &data).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn delete_solution_approach(db: State<Database>, id: i64) -> Result<(), String> {
+    db.delete_solution_approach(id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn reorder_solution_approaches(db: State<Database>, ids: Vec<i64>, orders: Vec<i64>) -> Result<(), String> {
+    db.reorder_solution_approaches(ids, orders).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub fn open_leetcode_login() -> Result<(), String> {
     let url = "https://leetcode.cn/accounts/login/";
     println!("[leetcode-login] 在系统浏览器中打开: {}", url);
@@ -292,7 +317,7 @@ pub async fn sync_leetcode_progress(
     let mut updated = 0i64;
     let mut failed = 0i64;
     let mut failed_items: Vec<SyncFailedItem> = Vec::new();
-    let mut new_problem_ids: Vec<(i64, i64)> = Vec::new(); // (leetcode_id, local_problem_id)
+    let mut detail_problem_ids: Vec<(i64, i64)> = Vec::new(); // (leetcode_id, local_problem_id)
 
     // Phase 1: bulk create/update using basic info from all-problems API
     for (i, item) in items.iter().enumerate() {
@@ -313,6 +338,7 @@ pub async fn sync_leetcode_progress(
 
         match db.find_problem_by_leetcode_id(item.leetcode_id) {
             Ok(Some(problem_id)) => {
+                detail_problem_ids.push((item.leetcode_id, problem_id));
                 let update = UpdateProblemDTO {
                     leetcode_id: None,
                     title: Some(item.title.clone()),
@@ -350,7 +376,7 @@ pub async fn sync_leetcode_progress(
                 match db.create_problem(&create) {
                     Ok(problem) => {
                         imported += 1;
-                        new_problem_ids.push((item.leetcode_id, problem.id));
+                        detail_problem_ids.push((item.leetcode_id, problem.id));
                     }
                     Err(_) => {
                         failed += 1;
@@ -373,11 +399,11 @@ pub async fn sync_leetcode_progress(
         }
     }
 
-    // Phase 2: background fetch details for newly imported problems
-    for (leetcode_id, problem_id) in &new_problem_ids {
+    // Phase 2: fetch details + tags for all synced problems
+    for (leetcode_id, problem_id) in &detail_problem_ids {
         let _ = app_handle.emit("sync-progress", SyncProgressEvent {
             current: 0,
-            total: new_problem_ids.len() as i64,
+            total: detail_problem_ids.len() as i64,
             leetcode_id: *leetcode_id,
             title: String::new(),
             status: "fetching-detail".into(),
@@ -385,10 +411,10 @@ pub async fn sync_leetcode_progress(
 
         match scraper::fetch_problem_info(*leetcode_id).await {
             Ok(info) => {
-                let tag_ids: Vec<i64> = db.get_tags().unwrap_or_default()
-                    .iter()
-                    .filter(|t| info.tags.contains(&t.name))
-                    .map(|t| t.id)
+                let tag_ids: Vec<i64> = info.tags.iter()
+                    .filter_map(|tag_name| {
+                        db.get_or_create_tag(tag_name, "#6366f1").ok().map(|t| t.id)
+                    })
                     .collect();
 
                 let update = UpdateProblemDTO {
@@ -420,10 +446,10 @@ pub async fn sync_leetcode_progress(
         }
     }
 
-    if !new_problem_ids.is_empty() {
+    if !detail_problem_ids.is_empty() {
         let _ = app_handle.emit("sync-progress", SyncProgressEvent {
-            current: new_problem_ids.len() as i64,
-            total: new_problem_ids.len() as i64,
+            current: detail_problem_ids.len() as i64,
+            total: detail_problem_ids.len() as i64,
             leetcode_id: 0,
             title: String::new(),
             status: "done".into(),

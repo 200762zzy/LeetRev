@@ -280,3 +280,52 @@ pub struct UpdateCustomApiDTO {
     #[serde(default)]
     pub problem_id: Option<i64>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SolutionApproach {
+    pub id: i64,
+    pub problem_id: i64,
+    pub title: String,
+    pub description: String,
+    pub language: String,
+    pub code: String,
+    pub time_complexity: String,
+    pub space_complexity: String,
+    pub sort_order: i64,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateSolutionApproachDTO {
+    pub problem_id: i64,
+    pub title: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub language: Option<String>,
+    #[serde(default)]
+    pub code: Option<String>,
+    #[serde(default)]
+    pub time_complexity: Option<String>,
+    #[serde(default)]
+    pub space_complexity: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateSolutionApproachDTO {
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub language: Option<String>,
+    #[serde(default)]
+    pub code: Option<String>,
+    #[serde(default)]
+    pub time_complexity: Option<String>,
+    #[serde(default)]
+    pub space_complexity: Option<String>,
+    #[serde(default)]
+    pub sort_order: Option<i64>,
+}

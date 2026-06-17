@@ -184,6 +184,23 @@ impl Database {
             );"
         )?;
 
+        // Migration: solution_approaches table
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS solution_approaches (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                problem_id INTEGER NOT NULL REFERENCES problems(id) ON DELETE CASCADE,
+                title TEXT NOT NULL,
+                description TEXT DEFAULT '',
+                language TEXT NOT NULL DEFAULT 'Python',
+                code TEXT NOT NULL DEFAULT '',
+                time_complexity TEXT DEFAULT '',
+                space_complexity TEXT DEFAULT '',
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+            );"
+        )?;
+
         Ok(())
     }
 
@@ -258,6 +275,20 @@ impl Database {
         )?;
         let id = conn.last_insert_rowid();
         Ok(Tag { id, name: name.into(), color: color.into() })
+    }
+
+    pub fn get_or_create_tag(&self, name: &str, color: &str) -> Result<Tag> {
+        let conn = self.conn.lock().unwrap();
+        let existing: Option<Tag> = conn
+            .query_row("SELECT id, name, color FROM tags WHERE name = ?1", params![name], |row| {
+                Ok(Tag { id: row.get(0)?, name: row.get(1)?, color: row.get(2)? })
+            })
+            .ok();
+        if let Some(tag) = existing {
+            return Ok(tag);
+        }
+        drop(conn);
+        self.create_tag(name, color)
     }
 
     pub fn update_tag(&self, id: i64, name: &str, color: &str) -> Result<Tag> {
@@ -1234,6 +1265,126 @@ impl Database {
             "UPDATE problems SET scratchpad = ?1, updated_at = datetime('now','localtime') WHERE id = ?2",
             params![content, problem_id],
         )?;
+        Ok(())
+    }
+
+    pub fn get_solution_approaches(&self, problem_id: i64) -> Result<Vec<SolutionApproach>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, problem_id, title, description, language, code,
+                    time_complexity, space_complexity, sort_order, created_at, updated_at
+             FROM solution_approaches
+             WHERE problem_id = ?1
+             ORDER BY sort_order ASC, id ASC"
+        )?;
+        let approaches = stmt.query_map(params![problem_id], |row| {
+            Ok(SolutionApproach {
+                id: row.get(0)?,
+                problem_id: row.get(1)?,
+                title: row.get(2)?,
+                description: row.get(3)?,
+                language: row.get(4)?,
+                code: row.get(5)?,
+                time_complexity: row.get(6)?,
+                space_complexity: row.get(7)?,
+                sort_order: row.get(8)?,
+                created_at: row.get(9)?,
+                updated_at: row.get(10)?,
+            })
+        })?.filter_map(|r| r.ok()).collect();
+        Ok(approaches)
+    }
+
+    pub fn create_solution_approach(&self, data: &CreateSolutionApproachDTO) -> Result<SolutionApproach> {
+        let conn = self.conn.lock().unwrap();
+        let max_order: i64 = conn.query_row(
+            "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM solution_approaches WHERE problem_id = ?1",
+            params![data.problem_id],
+            |row| row.get(0),
+        ).unwrap_or(0);
+        conn.execute(
+            "INSERT INTO solution_approaches (problem_id, title, description, language, code, time_complexity, space_complexity, sort_order)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                data.problem_id,
+                data.title,
+                data.description.as_deref().unwrap_or(""),
+                data.language.as_deref().unwrap_or("Python"),
+                data.code.as_deref().unwrap_or(""),
+                data.time_complexity.as_deref().unwrap_or(""),
+                data.space_complexity.as_deref().unwrap_or(""),
+                max_order,
+            ],
+        )?;
+        let id = conn.last_insert_rowid();
+        drop(conn);
+        self.get_solution_approach_by_id(id)
+    }
+
+    fn get_solution_approach_by_id(&self, id: i64) -> Result<SolutionApproach> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT id, problem_id, title, description, language, code,
+                    time_complexity, space_complexity, sort_order, created_at, updated_at
+             FROM solution_approaches WHERE id = ?1",
+            params![id],
+            |row| {
+                Ok(SolutionApproach {
+                    id: row.get(0)?,
+                    problem_id: row.get(1)?,
+                    title: row.get(2)?,
+                    description: row.get(3)?,
+                    language: row.get(4)?,
+                    code: row.get(5)?,
+                    time_complexity: row.get(6)?,
+                    space_complexity: row.get(7)?,
+                    sort_order: row.get(8)?,
+                    created_at: row.get(9)?,
+                    updated_at: row.get(10)?,
+                })
+            },
+        )
+    }
+
+    pub fn update_solution_approach(&self, id: i64, data: &UpdateSolutionApproachDTO) -> Result<SolutionApproach> {
+        let conn = self.conn.lock().unwrap();
+        let fields = [
+            ("title", &data.title),
+            ("description", &data.description),
+            ("language", &data.language),
+            ("code", &data.code),
+            ("time_complexity", &data.time_complexity),
+            ("space_complexity", &data.space_complexity),
+            ("sort_order", &data.sort_order.map(|v| v.to_string())),
+        ];
+        let set_clauses: Vec<String> = fields.iter()
+            .filter_map(|(name, val)| val.as_ref().map(|v| format!("{} = '{}'", name, v.replace('\'', "''"))))
+            .collect();
+        if !set_clauses.is_empty() {
+            let sql = format!(
+                "UPDATE solution_approaches SET {}, updated_at = datetime('now','localtime') WHERE id = ?1",
+                set_clauses.join(", ")
+            );
+            conn.execute(&sql, params![id])?;
+        }
+        drop(conn);
+        self.get_solution_approach_by_id(id)
+    }
+
+    pub fn delete_solution_approach(&self, id: i64) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("DELETE FROM solution_approaches WHERE id = ?1", params![id])?;
+        Ok(())
+    }
+
+    pub fn reorder_solution_approaches(&self, ids: Vec<i64>, orders: Vec<i64>) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        for (id, order) in ids.iter().zip(orders.iter()) {
+            conn.execute(
+                "UPDATE solution_approaches SET sort_order = ?1, updated_at = datetime('now','localtime') WHERE id = ?2",
+                params![order, id],
+            )?;
+        }
         Ok(())
     }
 
