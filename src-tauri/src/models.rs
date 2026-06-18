@@ -204,6 +204,12 @@ pub struct SyncAcCodesResult {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReviewHeatmapEntry {
+    pub day: String,
+    pub count: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProblemFilters {
     pub search: Option<String>,
     pub difficulty: Option<String>,

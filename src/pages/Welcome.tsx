@@ -3,18 +3,21 @@ import { useNavigate } from 'react-router-dom'
 import { invoke } from '@tauri-apps/api/core'
 import ReactECharts from 'echarts-for-react'
 import { BookOpen, TrendingUp, Target, Plus, AlertTriangle, Shuffle } from 'lucide-react'
-import type { Stats, TagStats, ReviewStats } from '../types'
+import type { Stats, TagStats, ReviewStats, ReviewHeatmapEntry } from '../types'
+import { ReviewHeatmap } from '../components/ReviewHeatmap'
 
 export function Welcome() {
   const navigate = useNavigate()
   const [stats, setStats] = useState<Stats | null>(null)
   const [tagStats, setTagStats] = useState<TagStats[]>([])
   const [reviewStats, setReviewStats] = useState<ReviewStats | null>(null)
+  const [heatmap, setHeatmap] = useState<ReviewHeatmapEntry[]>([])
 
   useEffect(() => {
     invoke<Stats>('get_stats').then(setStats).catch(() => {})
     invoke<TagStats[]>('get_tag_stats').then(setTagStats).catch(() => {})
     invoke<ReviewStats>('get_review_stats').then(setReviewStats).catch(() => {})
+    invoke<ReviewHeatmapEntry[]>('get_review_heatmap', { days: 364 }).then(setHeatmap).catch(() => {})
   }, [])
 
   const passRate =
@@ -158,6 +161,8 @@ export function Welcome() {
         </div>
       ) : (
         <>
+          <ReviewHeatmap data={heatmap} />
+
           <div className="grid grid-cols-2 gap-4">
             <div className="card">
               <h2 className="mb-1 text-sm font-semibold text-zinc-900">难度分布</h2>

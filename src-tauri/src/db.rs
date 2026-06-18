@@ -914,6 +914,29 @@ impl Database {
         Ok(result)
     }
 
+    pub fn get_review_heatmap(&self, days: i64) -> rusqlite::Result<Vec<ReviewHeatmapEntry>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT date(reviewed_at) as day, CAST(COUNT(*) AS INTEGER) as count
+             FROM reviews
+             WHERE reviewed_at >= datetime('now', 'localtime', ?1)
+             GROUP BY date(reviewed_at)
+             ORDER BY day ASC"
+        )?;
+        let param = format!("-{} days", days);
+        let rows = stmt.query_map(params![param], |row| {
+            Ok(ReviewHeatmapEntry {
+                day: row.get(0)?,
+                count: row.get(1)?,
+            })
+        })?;
+        let mut result = Vec::new();
+        for row in rows {
+            result.push(row?);
+        }
+        Ok(result)
+    }
+
     pub fn get_random_problem(&self) -> Result<Option<Problem>> {
         let conn = self.conn.lock().unwrap();
         let ids: Vec<i64> = conn.prepare("SELECT id FROM problems ORDER BY RANDOM() LIMIT 1")

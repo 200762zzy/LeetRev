@@ -52,6 +52,7 @@ pub fn run() {
             commands::get_review_stats,
             commands::get_review_history,
             commands::get_all_review_history,
+            commands::get_review_heatmap,
             commands::get_random_problem,
             commands::get_scratchpad,
             commands::update_scratchpad,

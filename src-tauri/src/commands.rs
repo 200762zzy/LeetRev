@@ -258,6 +258,11 @@ pub fn get_all_review_history(db: State<Database>) -> Result<Vec<ReviewRecord>, 
 }
 
 #[tauri::command]
+pub fn get_review_heatmap(db: State<Database>, days: i64) -> Result<Vec<ReviewHeatmapEntry>, String> {
+    db.get_review_heatmap(days).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub fn get_random_problem(db: State<Database>) -> Result<Option<Problem>, String> {
     db.get_random_problem().map_err(|e| e.to_string())
 }

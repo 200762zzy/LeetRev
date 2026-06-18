@@ -134,6 +134,11 @@ export interface ReviewStats {
   due_count: number
 }
 
+export interface ReviewHeatmapEntry {
+  day: string
+  count: number
+}
+
 export interface ReviewRecord {
   id: number
   problem_id: number
