@@ -205,17 +205,37 @@ export function ProblemDetail() {
             <div className="card">
               <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-zinc-900">
                 <History className="h-4 w-4" />
-                复习记录
+                复习记录 ({reviews.length}次)
               </h3>
-              <div className="space-y-2">
-                {reviews.map(r => (
-                  <div key={r.id} className="flex items-center justify-between rounded-lg border border-zinc-100 px-3 py-2">
-                    <span className="text-xs text-zinc-500">{r.reviewed_at.slice(0, 16)}</span>
-                    <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${confidenceColor(r.confidence)}`}>
-                      {confidenceLabel(r.confidence)}
-                    </span>
-                  </div>
-                ))}
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b border-zinc-100 text-left text-zinc-400">
+                      <th className="pb-2 pr-3 font-medium">时间</th>
+                      <th className="pb-2 pr-3 font-medium">回顾难度</th>
+                      <th className="pb-2 pr-3 font-medium">EF</th>
+                      <th className="pb-2 pr-3 font-medium">间隔</th>
+                      <th className="pb-2 pr-3 font-medium">第几次</th>
+                      <th className="pb-2 font-medium">下次复习</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {reviews.map(r => (
+                      <tr key={r.id} className="border-b border-zinc-50 last:border-0">
+                        <td className="py-2 pr-3 text-zinc-500 whitespace-nowrap">{r.reviewed_at.slice(0, 16)}</td>
+                        <td className="py-2 pr-3">
+                          <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${confidenceColor(r.confidence)}`}>
+                            {confidenceLabel(r.confidence)}
+                          </span>
+                        </td>
+                        <td className="py-2 pr-3 font-mono text-zinc-700">{r.ease_factor.toFixed(2)}</td>
+                        <td className="py-2 pr-3 font-mono text-zinc-700">{r.interval_days}天</td>
+                        <td className="py-2 pr-3 text-zinc-700">第{r.repetitions}次</td>
+                        <td className="py-2 font-mono text-zinc-500">{r.next_review.slice(0, 10)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             </div>
           )}

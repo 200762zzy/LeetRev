@@ -51,6 +51,7 @@ pub fn run() {
             commands::get_tag_due_counts,
             commands::get_review_stats,
             commands::get_review_history,
+            commands::get_all_review_history,
             commands::get_random_problem,
             commands::get_scratchpad,
             commands::update_scratchpad,

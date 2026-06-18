@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Outlet, NavLink } from 'react-router-dom'
-import { BookOpen, BarChart3, Tags, Settings as SettingsIcon, Github, Search, Target } from 'lucide-react'
+import { BookOpen, BarChart3, Tags, Settings as SettingsIcon, Github, Search, Target, History } from 'lucide-react'
 import { ApiSearch } from './ApiSearch'
 
 const navItems = [
@@ -8,6 +8,7 @@ const navItems = [
   { to: '/problems', icon: BookOpen, label: '题目' },
   { to: '/tags', icon: Tags, label: '标签' },
   { to: '/review', icon: Target, label: '复习' },
+  { to: '/review-history', icon: History, label: '复习历史' },
   { to: '/settings', icon: SettingsIcon, label: '设置' },
 ]
 

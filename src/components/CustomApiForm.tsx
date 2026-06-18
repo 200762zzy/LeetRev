@@ -3,6 +3,9 @@ import { X, Plus, Trash2, AlertCircle } from 'lucide-react'
 import { invoke } from '@tauri-apps/api/core'
 import type { ApiLanguage, ApiExample, CustomApiEntry, CreateCustomApiDTO, UpdateCustomApiDTO } from '../types'
 
+const DRAFT_KEY = 'custom_api_form_draft'
+const SAVE_DRAFT_MS = 1000
+
 interface Props {
   open: boolean
   onClose: () => void
@@ -82,13 +85,26 @@ export function CustomApiForm({ open, onClose, entry, defaultLanguage, defaultCo
   const [form, setForm] = useState<FormState>(emptyForm)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [fromDraft, setFromDraft] = useState(false)
 
   useEffect(() => {
     if (!open) return
     if (entry) {
       setForm(entryToForm(entry))
+      setFromDraft(false)
     } else {
+      const saved = localStorage.getItem(DRAFT_KEY)
+      if (saved) {
+        try {
+          const parsed = JSON.parse(saved)
+          setForm(parsed as FormState)
+          setFromDraft(true)
+          setError(null)
+          return
+        } catch { /* fall through */ }
+      }
       const f = emptyForm()
+      setFromDraft(false)
       if (defaultLanguage) f.language = defaultLanguage
       if (defaultContainer) f.container = defaultContainer
       if (defaultProblemId !== undefined) f.problem_id = defaultProblemId
@@ -105,6 +121,18 @@ export function CustomApiForm({ open, onClose, entry, defaultLanguage, defaultCo
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
   }, [open, onClose])
+
+  // Auto-save draft for new entries
+  useEffect(() => {
+    if (!open || entry) return
+    const timer = setTimeout(() => {
+      localStorage.setItem(DRAFT_KEY, JSON.stringify(form))
+    }, SAVE_DRAFT_MS)
+    return () => {
+      clearTimeout(timer)
+      localStorage.setItem(DRAFT_KEY, JSON.stringify(form))
+    }
+  }, [open, entry, form])
 
   const update = useCallback(<K extends keyof FormState>(key: K, value: FormState[K]) => {
     setForm(prev => ({ ...prev, [key]: value }))
@@ -196,6 +224,7 @@ export function CustomApiForm({ open, onClose, entry, defaultLanguage, defaultCo
         }
         await invoke('create_custom_api', { data: dto })
       }
+      localStorage.removeItem(DRAFT_KEY)
       onSaved()
       onClose()
     } catch (err) {
@@ -217,6 +246,7 @@ export function CustomApiForm({ open, onClose, entry, defaultLanguage, defaultCo
         <div className="flex items-center justify-between border-b border-zinc-100 px-4 py-3">
           <h2 className="text-sm font-semibold text-zinc-800">
             {entry ? '编辑 API 条目' : '添加自定义 API'}
+            {fromDraft && <span className="ml-2 rounded bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-700">草稿</span>}
           </h2>
           <button onClick={onClose} className="rounded-md p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-600">
             <X className="h-4 w-4" />

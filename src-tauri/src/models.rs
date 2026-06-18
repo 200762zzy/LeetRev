@@ -186,7 +186,13 @@ pub struct ReviewStats {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReviewRecord {
     pub id: i64,
+    pub problem_id: i64,
+    pub problem_title: String,
     pub confidence: String,
+    pub ease_factor: f64,
+    pub interval_days: i64,
+    pub repetitions: i64,
+    pub next_review: String,
     pub reviewed_at: String,
 }
 

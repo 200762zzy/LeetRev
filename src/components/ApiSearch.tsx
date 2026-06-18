@@ -5,6 +5,8 @@ import type { ApiEntry, ApiLanguage, CustomApiEntry } from '../types'
 import { apiData } from '../data/stl'
 import { CustomApiForm } from './CustomApiForm'
 
+const DRAFT_KEY = 'custom_api_form_draft'
+
 interface Props {
   open: boolean
   onClose: () => void
@@ -55,6 +57,7 @@ export function ApiSearch({ open, onClose, problemId }: Props) {
   const [customEntries, setCustomEntries] = useState<CustomApiEntry[]>([])
   const [formOpen, setFormOpen] = useState(false)
   const [editingEntry, setEditingEntry] = useState<CustomApiEntry | null>(null)
+  const [hasDraft, setHasDraft] = useState(false)
 
   const builtinData = useMemo(() => apiData, [])
 
@@ -71,6 +74,7 @@ export function ApiSearch({ open, onClose, problemId }: Props) {
       setExpanded(new Set())
       setCopiedId(null)
       loadCustom()
+      setHasDraft(!!localStorage.getItem(DRAFT_KEY))
     }
   }, [open, loadCustom])
 
@@ -160,6 +164,7 @@ export function ApiSearch({ open, onClose, problemId }: Props) {
   const handleAdd = useCallback(() => {
     setEditingEntry(null)
     setFormOpen(true)
+    setHasDraft(false)
   }, [])
 
   const handleDelete = useCallback(async (id: string) => {
@@ -172,6 +177,7 @@ export function ApiSearch({ open, onClose, problemId }: Props) {
 
   const handleSaved = useCallback(async () => {
     await loadCustom()
+    setHasDraft(!!localStorage.getItem(DRAFT_KEY))
   }, [loadCustom])
 
   if (!open) return null
@@ -208,13 +214,21 @@ export function ApiSearch({ open, onClose, problemId }: Props) {
               </button>
             ))}
           </div>
-          <button
-            onClick={handleAdd}
-            className="ml-1 rounded-md p-1.5 text-zinc-400 hover:bg-zinc-100 hover:text-primary-600"
-            title="添加自定义 API"
-          >
-            <Plus className="h-4 w-4" />
-          </button>
+          <div className="relative ml-1">
+            <button
+              onClick={handleAdd}
+              className="rounded-md p-1.5 text-zinc-400 hover:bg-zinc-100 hover:text-primary-600"
+              title="添加自定义 API"
+            >
+              <Plus className="h-4 w-4" />
+            </button>
+            {hasDraft && (
+              <span className="absolute -right-0.5 -top-0.5 flex h-2.5 w-2.5">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400 opacity-75" />
+                <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-amber-500" />
+              </span>
+            )}
+          </div>
           <button onClick={onClose} className="ml-1 rounded-md p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-600">
             <X className="h-4 w-4" />
           </button>

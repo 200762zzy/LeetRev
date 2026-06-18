@@ -858,15 +858,53 @@ impl Database {
     pub fn get_review_history(&self, problem_id: i64) -> rusqlite::Result<Vec<ReviewRecord>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, confidence, reviewed_at
-             FROM reviews WHERE problem_id = ?1
-             ORDER BY id DESC"
+            "SELECT r.id, r.problem_id, COALESCE(p.title, ''), r.confidence,
+                    r.ease_factor, r.interval_days, r.repetitions, r.next_review, r.reviewed_at
+             FROM reviews r
+             LEFT JOIN problems p ON r.problem_id = p.id
+             WHERE r.problem_id = ?1
+             ORDER BY r.id DESC"
         )?;
         let rows = stmt.query_map(params![problem_id], |row| {
             Ok(ReviewRecord {
                 id: row.get(0)?,
-                confidence: row.get(1)?,
-                reviewed_at: row.get(2)?,
+                problem_id: row.get(1)?,
+                problem_title: row.get(2)?,
+                confidence: row.get(3)?,
+                ease_factor: row.get(4)?,
+                interval_days: row.get(5)?,
+                repetitions: row.get(6)?,
+                next_review: row.get(7)?,
+                reviewed_at: row.get(8)?,
+            })
+        })?;
+        let mut result = Vec::new();
+        for row in rows {
+            result.push(row?);
+        }
+        Ok(result)
+    }
+
+    pub fn get_all_review_history(&self) -> rusqlite::Result<Vec<ReviewRecord>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT r.id, r.problem_id, COALESCE(p.title, ''), r.confidence,
+                    r.ease_factor, r.interval_days, r.repetitions, r.next_review, r.reviewed_at
+             FROM reviews r
+             LEFT JOIN problems p ON r.problem_id = p.id
+             ORDER BY r.id DESC"
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok(ReviewRecord {
+                id: row.get(0)?,
+                problem_id: row.get(1)?,
+                problem_title: row.get(2)?,
+                confidence: row.get(3)?,
+                ease_factor: row.get(4)?,
+                interval_days: row.get(5)?,
+                repetitions: row.get(6)?,
+                next_review: row.get(7)?,
+                reviewed_at: row.get(8)?,
             })
         })?;
         let mut result = Vec::new();

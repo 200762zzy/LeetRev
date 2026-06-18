@@ -136,7 +136,13 @@ export interface ReviewStats {
 
 export interface ReviewRecord {
   id: number
+  problem_id: number
+  problem_title: string
   confidence: 'easy' | 'medium' | 'hard'
+  ease_factor: number
+  interval_days: number
+  repetitions: number
+  next_review: string
   reviewed_at: string
 }
 

@@ -253,6 +253,11 @@ pub fn get_review_history(db: State<Database>, problem_id: i64) -> Result<Vec<Re
 }
 
 #[tauri::command]
+pub fn get_all_review_history(db: State<Database>) -> Result<Vec<ReviewRecord>, String> {
+    db.get_all_review_history().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub fn get_random_problem(db: State<Database>) -> Result<Option<Problem>, String> {
     db.get_random_problem().map_err(|e| e.to_string())
 }

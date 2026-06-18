@@ -2,6 +2,7 @@ import { Routes, Route, Navigate } from 'react-router-dom'
 import { Layout } from './components/Layout'
 import { Welcome } from './pages/Welcome'
 import { ReviewSession } from './pages/ReviewSession'
+import { ReviewHistory } from './pages/ReviewHistory'
 import { Problems } from './pages/Problems'
 import { ProblemForm } from './pages/ProblemForm'
 import { ProblemDetail } from './pages/ProblemDetail'
@@ -19,6 +20,7 @@ export default function App() {
         <Route path="/problems/:id/edit" element={<ProblemForm />} />
         <Route path="/tags" element={<TagManager />} />
         <Route path="/review" element={<ReviewSession />} />
+        <Route path="/review-history" element={<ReviewHistory />} />
         <Route path="/settings" element={<Settings />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
