@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
-import { Loader2, RefreshCw, CheckCircle, AlertCircle, ExternalLink, Save, XCircle, BarChart3, Code2 } from 'lucide-react'
-import type { SyncResult, SyncProgressEvent, SyncAcCodesResult } from '../types'
+import { Loader2, RefreshCw, CheckCircle, AlertCircle, ExternalLink, Save, XCircle, BarChart3, Code2, Brain } from 'lucide-react'
+import type { SyncResult, SyncProgressEvent, SyncAcCodesResult, LlmProvider } from '../types'
 
 export function Settings() {
   const [cookie, setCookie] = useState('')
@@ -254,6 +254,127 @@ export function Settings() {
           </div>
         )}
       </div>
+
+      <div className="card space-y-4">
+        <div>
+          <h2 className="text-sm font-semibold text-zinc-900">代码分析（LLM）</h2>
+          <p className="mt-1 text-xs text-zinc-500">
+            使用大语言模型自动分析提交的代码，生成复杂度、评分和改进建议。支持 OpenAI 兼容接口和本地 Ollama。
+          </p>
+        </div>
+
+        <LlmConfig />
+      </div>
+    </div>
+  )
+}
+
+function LlmConfig() {
+  const [provider, setProvider] = useState<LlmProvider>('ollama')
+  const [ollamaUrl, setOllamaUrl] = useState('http://localhost:11434')
+  const [ollamaModel, setOllamaModel] = useState('qwen2.5-coder:7b')
+  const [openaiKey, setOpenaiKey] = useState('')
+  const [openaiBaseUrl, setOpenaiBaseUrl] = useState('')
+  const [openaiModel, setOpenaiModel] = useState('gpt-4o-mini')
+  const [saving, setSaving] = useState(false)
+  const [saved, setSaved] = useState(false)
+
+  useEffect(() => {
+    (async () => {
+      const p = await invoke<string | null>('get_setting', { key: 'llm_provider' })
+      if (p === 'ollama' || p === 'openai') setProvider(p)
+      const ou = await invoke<string | null>('get_setting', { key: 'llm_ollama_url' })
+      if (ou) setOllamaUrl(ou)
+      const om = await invoke<string | null>('get_setting', { key: 'llm_ollama_model' })
+      if (om) setOllamaModel(om)
+      const ok = await invoke<string | null>('get_setting', { key: 'llm_openai_key' })
+      if (ok) setOpenaiKey(ok)
+      const ob = await invoke<string | null>('get_setting', { key: 'llm_openai_base_url' })
+      if (ob) setOpenaiBaseUrl(ob)
+      const omm = await invoke<string | null>('get_setting', { key: 'llm_openai_model' })
+      if (omm) setOpenaiModel(omm)
+    })()
+  }, [])
+
+  const handleSave = async () => {
+    setSaving(true)
+    try {
+      await invoke('set_setting', { key: 'llm_provider', value: provider })
+      await invoke('set_setting', { key: 'llm_ollama_url', value: ollamaUrl })
+      await invoke('set_setting', { key: 'llm_ollama_model', value: ollamaModel })
+      await invoke('set_setting', { key: 'llm_openai_key', value: openaiKey })
+      await invoke('set_setting', { key: 'llm_openai_base_url', value: openaiBaseUrl })
+      await invoke('set_setting', { key: 'llm_openai_model', value: openaiModel })
+      setSaved(true)
+      setTimeout(() => setSaved(false), 2000)
+    } catch (e) {
+      alert('保存失败：' + String(e))
+    }
+    setSaving(false)
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-4">
+        <label className="flex items-center gap-2">
+          <input
+            type="radio"
+            name="llm-provider"
+            value="ollama"
+            checked={provider === 'ollama'}
+            onChange={() => setProvider('ollama')}
+            className="h-4 w-4 text-primary-600"
+          />
+          <span className="text-sm">Ollama（本地）</span>
+        </label>
+        <label className="flex items-center gap-2">
+          <input
+            type="radio"
+            name="llm-provider"
+            value="openai"
+            checked={provider === 'openai'}
+            onChange={() => setProvider('openai')}
+            className="h-4 w-4 text-primary-600"
+          />
+          <span className="text-sm">OpenAI 兼容</span>
+        </label>
+      </div>
+
+      {provider === 'ollama' && (
+        <div className="space-y-2 pl-2">
+          <div>
+            <label className="text-xs font-medium text-zinc-600">Ollama URL</label>
+            <input className="input-field mt-0.5" value={ollamaUrl} onChange={(e) => setOllamaUrl(e.target.value)} />
+          </div>
+          <div>
+            <label className="text-xs font-medium text-zinc-600">模型名称</label>
+            <input className="input-field mt-0.5" value={ollamaModel} onChange={(e) => setOllamaModel(e.target.value)} />
+          </div>
+        </div>
+      )}
+
+      {provider === 'openai' && (
+        <div className="space-y-2 pl-2">
+          <div>
+            <label className="text-xs font-medium text-zinc-600">API Key</label>
+            <input className="input-field mt-0.5" type="password" value={openaiKey} onChange={(e) => setOpenaiKey(e.target.value)} />
+          </div>
+          <div>
+            <label className="text-xs font-medium text-zinc-600">Base URL</label>
+            <input className="input-field mt-0.5" value={openaiBaseUrl} onChange={(e) => setOpenaiBaseUrl(e.target.value)} placeholder="https://api.openai.com/v1" />
+          </div>
+          <div>
+            <label className="text-xs font-medium text-zinc-600">模型名称</label>
+            <input className="input-field mt-0.5" value={openaiModel} onChange={(e) => setOpenaiModel(e.target.value)} />
+          </div>
+        </div>
+      )}
+
+      <button className="btn-primary" onClick={handleSave} disabled={saving}>
+        {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Brain className="h-4 w-4" />}
+        保存 LLM 配置
+      </button>
+      {saved && <span className="text-xs text-emerald-600">已保存</span>}
     </div>
   )
 }

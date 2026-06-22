@@ -341,3 +341,34 @@ pub struct UpdateSolutionApproachDTO {
     #[serde(default)]
     pub sort_order: Option<i64>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CodeAnalysis {
+    pub id: i64,
+    pub problem_id: i64,
+    pub language: String,
+    pub code: String,
+    pub time_complexity: String,
+    pub space_complexity: String,
+    pub score: i64,
+    pub summary: String,
+    pub suggestions: String,
+    pub runtime_ms: String,
+    pub memory_mb: String,
+    pub provider: String,
+    pub model: String,
+    pub created_at: String,
+    pub optimized_code: Option<String>,
+    pub better_code: Option<String>,
+    pub better_title: Option<String>,
+    pub better_language: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AnalyzeCodeDTO {
+    pub problem_id: i64,
+    pub code: String,
+    pub language: String,
+    pub runtime_ms: Option<String>,
+    pub memory_mb: Option<String>,
+}

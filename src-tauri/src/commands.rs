@@ -1,5 +1,6 @@
 use tauri::{Emitter, State};
 use crate::db::Database;
+use crate::llm;
 use crate::models::*;
 use crate::scraper;
 use crate::scraper::SyncProgressEvent;
@@ -470,4 +471,37 @@ pub async fn sync_leetcode_progress(
     let _ = db.compute_submission_stats();
 
     Ok(SyncResult { total, imported, updated, failed, failed_items })
+}
+
+#[tauri::command]
+pub async fn analyze_code(db: State<'_, Database>, data: AnalyzeCodeDTO) -> Result<CodeAnalysis, String> {
+    let result = llm::analyze_code(&db, &data).await?;
+    let provider = llm::provider_name(&db);
+    let model = llm::model_name(&db);
+    let (better_code, better_title) = match &result.better_solution {
+        Some(bs) => (serde_json::to_string(bs).unwrap_or_default(), bs.title.clone()),
+        None => (String::new(), String::new()),
+    };
+    let better_language = result.better_solution.as_ref().map(|bs| bs.language.clone()).unwrap_or_default();
+    db.save_code_analysis(
+        &data,
+        &result.time_complexity,
+        &result.space_complexity,
+        result.score,
+        &result.summary,
+        &result.suggestions,
+        data.runtime_ms.as_deref().unwrap_or(""),
+        data.memory_mb.as_deref().unwrap_or(""),
+        &provider,
+        &model,
+        result.optimized_code.as_deref().unwrap_or(""),
+        &better_code,
+        &better_title,
+        &better_language,
+    ).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn get_code_analyses(db: State<Database>, problem_id: i64) -> Result<Vec<CodeAnalysis>, String> {
+    db.get_code_analyses(problem_id).map_err(|e| e.to_string())
 }

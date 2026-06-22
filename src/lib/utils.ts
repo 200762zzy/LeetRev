@@ -62,3 +62,28 @@ export const DEFAULT_TAGS = [
   '二分查找', '排序', '位运算', '递归',
   '分治', '设计', '数据库',
 ]
+
+export interface ParsedBetterSolution {
+  code: string
+  explanation: string
+  title: string
+  time_complexity: string
+  space_complexity: string
+}
+
+export function parseBetterCode(raw: string | null): ParsedBetterSolution | null {
+  if (!raw) return null
+  try {
+    const obj = JSON.parse(raw)
+    if (!obj.code) return null
+    return {
+      code: obj.code ?? '',
+      explanation: obj.explanation ?? '',
+      title: obj.title ?? '',
+      time_complexity: obj.time_complexity ?? '',
+      space_complexity: obj.space_complexity ?? '',
+    }
+  } catch {
+    return null
+  }
+}

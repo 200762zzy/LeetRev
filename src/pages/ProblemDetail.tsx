@@ -2,9 +2,10 @@ import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { invoke } from '@tauri-apps/api/core'
 import DOMPurify from 'dompurify'
-import { ArrowLeft, Loader2, RefreshCw, History, Target, BookOpen, Plus, Pencil, Trash2, ChevronUp, ChevronDown } from 'lucide-react'
-import type { Problem, CodeSnippet, ReviewRecord, SolutionApproach } from '../types'
-import { difficultyColor } from '../lib/utils'
+import { ArrowLeft, Loader2, RefreshCw, History, Target, BookOpen, Plus, Pencil, Trash2, ChevronUp, ChevronDown, Brain } from 'lucide-react'
+import type { Problem, CodeSnippet, ReviewRecord, SolutionApproach, CodeAnalysis } from '../types'
+import { ComplexityChart } from '../components/ComplexityChart'
+import { difficultyColor, parseBetterCode } from '../lib/utils'
 import { CodeEditor } from '../components/CodeEditor'
 import { SolutionForm } from '../components/SolutionForm'
 
@@ -19,6 +20,8 @@ export function ProblemDetail() {
   const [editingSolution, setEditingSolution] = useState<SolutionApproach | null>(null)
   const [loading, setLoading] = useState(true)
   const [fetchingContent, setFetchingContent] = useState(false)
+  const [analyses, setAnalyses] = useState<CodeAnalysis[]>([])
+  const [expandedAnalyses, setExpandedAnalyses] = useState<Set<number>>(new Set())
 
   useEffect(() => {
     if (!id) return
@@ -28,12 +31,14 @@ export function ProblemDetail() {
       invoke<CodeSnippet[]>('get_code_snippets', { problemId: Number(id) }),
       invoke<ReviewRecord[]>('get_review_history', { problemId: Number(id) }),
       invoke<SolutionApproach[]>('get_solution_approaches', { problemId: Number(id) }),
+      invoke<CodeAnalysis[]>('get_code_analyses', { problemId: Number(id) }),
     ])
-      .then(([p, snips, rvs, sols]) => {
+      .then(([p, snips, rvs, sols, ans]) => {
         setProblem(p)
         setSnippets(snips)
         setReviews(rvs)
         setSolutions(sols)
+        setAnalyses(ans)
       })
       .catch(console.error)
       .finally(() => setLoading(false))
@@ -245,6 +250,92 @@ export function ProblemDetail() {
               <h3 className="mb-2 text-sm font-semibold text-zinc-900">解题思路</h3>
               <p className="whitespace-pre-wrap rounded-lg bg-zinc-50 p-3 text-sm text-zinc-600 leading-relaxed">{problem.notes}</p>
             </div>
+          )}
+
+          {analyses.length > 0 && (
+            <>
+              <ComplexityChart analyses={analyses} />
+              <div className="card space-y-3">
+                <h3 className="flex items-center gap-2 text-sm font-semibold text-zinc-900">
+                  <Brain className="h-4 w-4 text-violet-500" />
+                  代码分析历史 ({analyses.length}次)
+                </h3>
+                <div className="max-h-80 space-y-2 overflow-y-auto">
+                  {analyses.map(a => (
+                    <div key={a.id} className="rounded-lg border border-violet-100 bg-violet-50/50 p-3">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-zinc-400">{a.created_at.slice(0, 16)}</span>
+                        <span className="text-xs text-zinc-400">{a.provider}/{a.model}</span>
+                      </div>
+                      <div className="mt-1 grid grid-cols-3 gap-2 text-xs">
+                        <div className="rounded bg-white/60 p-1.5">
+                          <span className="text-zinc-500">时间复杂度</span>
+                          <p className="font-mono text-violet-700">{a.time_complexity}</p>
+                        </div>
+                        <div className="rounded bg-white/60 p-1.5">
+                          <span className="text-zinc-500">空间复杂度</span>
+                          <p className="font-mono text-violet-700">{a.space_complexity}</p>
+                        </div>
+                        <div className="rounded bg-white/60 p-1.5">
+                          <span className="text-zinc-500">评分</span>
+                          <p className="font-semibold text-violet-700">{a.score}</p>
+                        </div>
+                      </div>
+                      {a.summary && <p className="mt-1 text-xs text-zinc-600">{a.summary}</p>}
+                      {a.suggestions && <p className="mt-1 text-xs text-zinc-500">{a.suggestions}</p>}
+                      {(a.optimized_code || a.better_code) && (
+                        <div className="mt-2 flex gap-2">
+                          {a.optimized_code && (
+                            <button
+                              className={`rounded px-2 py-1 text-xs font-medium transition-colors ${
+                                expandedAnalyses.has(a.id) ? 'bg-violet-200 text-violet-800' : 'bg-violet-100 text-violet-700 hover:bg-violet-200'
+                              }`}
+                              onClick={() => {
+                                const next = new Set(expandedAnalyses);
+                                if (next.has(a.id)) { next.delete(a.id); } else { next.add(a.id); }
+                                setExpandedAnalyses(next)
+                              }}
+                            >
+                              {expandedAnalyses.has(a.id) ? '收起代码' : '查看代码'}
+                            </button>
+                          )}
+                        </div>
+                      )}
+                      {expandedAnalyses.has(a.id) && a.optimized_code && (
+                        <div className="mt-2">
+                          <span className="text-xs font-medium text-zinc-500">优化代码</span>
+                          <div className="mt-1">
+                            <CodeEditor code={a.optimized_code} language={a.language as any} editable={false} />
+                          </div>
+                        </div>
+                      )}
+                      {expandedAnalyses.has(a.id) && a.better_code && (() => {
+                        const parsed = parseBetterCode(a.better_code)
+                        if (!parsed) {
+                          return (
+                            <div className="mt-2">
+                              <CodeEditor code={a.better_code} language={(a.better_language ?? a.language) as any} editable={false} />
+                            </div>
+                          )
+                        }
+                        return (
+                          <div className="mt-2">
+                            <div className="flex items-center justify-between">
+                              <span className="text-xs font-medium text-zinc-500">更优解法</span>
+                              {parsed.title && <span className="text-xs text-violet-700">{parsed.title}</span>}
+                            </div>
+                            {parsed.explanation && <p className="mt-1 text-xs text-zinc-500">{parsed.explanation}</p>}
+                            <div className="mt-1">
+                              <CodeEditor code={parsed.code} language={(a.better_language ?? a.language) as any} editable={false} />
+                            </div>
+                          </div>
+                        )
+                      })()}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </>
           )}
 
           {snippets.length > 0 && (

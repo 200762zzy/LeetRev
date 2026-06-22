@@ -1,11 +1,11 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { invoke } from '@tauri-apps/api/core'
-import { ArrowLeft, Eye, Loader2, ThumbsUp, Meh, ThumbsDown, CheckCircle, BookOpen, BookMarked, Maximize2, Minimize2, Send, X, AlertTriangle, FileText, SkipForward } from 'lucide-react'
+import { ArrowLeft, Eye, Loader2, ThumbsUp, Meh, ThumbsDown, CheckCircle, BookOpen, BookMarked, Maximize2, Minimize2, Send, X, AlertTriangle, FileText, SkipForward, Brain } from 'lucide-react'
 import DOMPurify from 'dompurify'
-import type { Problem, CodeLanguage, CodeSnippet, CodeTemplate, SubmissionResult, Tag, TagDueCount, SolutionApproach } from '../types'
+import type { Problem, CodeLanguage, CodeSnippet, CodeTemplate, SubmissionResult, Tag, TagDueCount, SolutionApproach, CodeAnalysis, AnalyzeCodeDTO } from '../types'
 import { LANGUAGES } from '../types'
-import { difficultyColor } from '../lib/utils'
+import { difficultyColor, parseBetterCode } from '../lib/utils'
 import { CodeEditor } from '../components/CodeEditor'
 import { CustomApiForm } from '../components/CustomApiForm'
 import { Scratchpad } from '../components/Scratchpad'
@@ -48,11 +48,16 @@ export function ReviewSession() {
   const [tagDueCounts, setTagDueCounts] = useState<TagDueCount[]>([])
   const [columnLoading, setColumnLoading] = useState(false)
   const [approaches, setApproaches] = useState<SolutionApproach[]>([])
+  const [llmAnalysis, setLlmAnalysis] = useState<CodeAnalysis | null>(null)
+  const [llmAnalyzing, setLlmAnalyzing] = useState(false)
+  const [llmError, setLlmError] = useState('')
+  const [showOptimized, setShowOptimized] = useState(false)
+  const [showBetter, setShowBetter] = useState(false)
 
   const loadQueue = useCallback(async (tid: number | null, pid: number | null) => {
     setLoading(true)
     try {
-      let data = await invoke<Problem[]>('get_review_queue', { tagId: tid })
+      const data = await invoke<Problem[]>('get_review_queue', { tagId: tid })
       if (pid != null) {
         const idx = data.findIndex(p => p.id === pid)
         if (idx > 0) {
@@ -128,6 +133,11 @@ export function ReviewSession() {
     setSubmitResult(null)
     setSubmissionBlocked(false)
     setCodeFullscreen(false)
+    setLlmAnalysis(null)
+    setLlmAnalyzing(false)
+    setLlmError('')
+    setShowOptimized(false)
+    setShowBetter(false)
 
     let snipsResult: CodeSnippet[] | null = null
     let tplsResult: CodeTemplate[] | null = current.leetcode_id ? null : []
@@ -230,7 +240,30 @@ export function ReviewSession() {
           id: current.id,
           data: { notes: userNotes || null },
         })
+        // Auto-save AC code as a solution approach
+        const today = new Date().toISOString().slice(0, 10)
+        invoke('create_solution_approach', {
+          data: {
+            problem_id: current.id,
+            title: `复习解法 - ${today}`,
+            language,
+            code: userCode,
+            description: `复习阶段提交通过的代码（${today}）`,
+            time_complexity: null,
+            space_complexity: null,
+          },
+        }).catch(() => {})
         setStage('reveal')
+        setLlmAnalyzing(true)
+        invoke<CodeAnalysis>('analyze_code', {
+          data: {
+            problem_id: current.id,
+            code: userCode,
+            language,
+            runtime_ms: result.runtime ?? null,
+            memory_mb: result.memory ?? null,
+          } satisfies AnalyzeCodeDTO,
+        }).then((a) => { setLlmAnalysis(a); setLlmError('') }).catch((e) => { setLlmError(String(e)) }).finally(() => setLlmAnalyzing(false))
       } else {
         setSubmissionBlocked(true)
       }
@@ -747,6 +780,127 @@ export function ReviewSession() {
                   </div>
                 </div>
               )}
+              {llmAnalyzing && (
+                <div className="flex items-center gap-2 rounded-lg border border-violet-200 bg-violet-50 p-3">
+                  <Loader2 className="h-4 w-4 animate-spin text-violet-500" />
+                  <span className="text-sm text-violet-700">AI 正在分析代码...</span>
+                </div>
+              )}
+
+              {llmError && (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
+                  <div className="flex items-center gap-2">
+                    <AlertTriangle className="h-4 w-4 text-amber-500" />
+                    <span className="text-sm font-medium text-amber-700">AI 分析失败</span>
+                  </div>
+                  <p className="mt-1 text-xs text-amber-600">{llmError}</p>
+                  <p className="mt-1 text-xs text-amber-500">请前往设置页配置 LLM（支持 Ollama 本地或 OpenAI 兼容接口）</p>
+                </div>
+              )}
+
+              {llmAnalysis && (
+                <div className="rounded-lg border border-violet-200 bg-violet-50 p-3">
+                  <div className="flex items-center gap-2">
+                    <Brain className="h-4 w-4 text-violet-600" />
+                    <span className="text-sm font-semibold text-violet-800">代码分析</span>
+                    <span className="ml-auto text-xs text-violet-400">
+                      {llmAnalysis.provider}/{llmAnalysis.model}
+                    </span>
+                  </div>
+                  <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
+                    <div className="rounded bg-white/60 p-2">
+                      <span className="text-zinc-500">时间复杂度</span>
+                      <p className="font-mono text-violet-700">{llmAnalysis.time_complexity}</p>
+                    </div>
+                    <div className="rounded bg-white/60 p-2">
+                      <span className="text-zinc-500">空间复杂度</span>
+                      <p className="font-mono text-violet-700">{llmAnalysis.space_complexity}</p>
+                    </div>
+                    <div className="rounded bg-white/60 p-2">
+                      <span className="text-zinc-500">代码评分</span>
+                      <p className="text-lg font-bold text-violet-700">{llmAnalysis.score}</p>
+                    </div>
+                    {llmAnalysis.runtime_ms && (
+                      <div className="rounded bg-white/60 p-2">
+                        <span className="text-zinc-500">运行时间</span>
+                        <p className="text-violet-700">{llmAnalysis.runtime_ms}</p>
+                      </div>
+                    )}
+                  </div>
+                  {llmAnalysis.summary && (
+                    <p className="mt-2 text-xs text-zinc-600">{llmAnalysis.summary}</p>
+                  )}
+                  {llmAnalysis.suggestions && (
+                    <div className="mt-2">
+                      <span className="text-xs font-medium text-zinc-500">改进建议</span>
+                      <p className="text-xs text-zinc-500">{llmAnalysis.suggestions}</p>
+                    </div>
+                  )}
+
+                  <div className="mt-3 flex gap-2">
+                    {llmAnalysis.optimized_code && (
+                      <button
+                        className={`flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+                          showOptimized ? 'bg-violet-200 text-violet-800' : 'bg-violet-100 text-violet-700 hover:bg-violet-200'
+                        }`}
+                        onClick={() => setShowOptimized(!showOptimized)}
+                      >
+                        {showOptimized ? '收起优化代码' : '🔧 查看优化代码'}
+                      </button>
+                    )}
+                    {llmAnalysis.better_code && (
+                      <button
+                        className={`flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+                          showBetter ? 'bg-violet-200 text-violet-800' : 'bg-violet-100 text-violet-700 hover:bg-violet-200'
+                        }`}
+                        onClick={() => setShowBetter(!showBetter)}
+                      >
+                        {showBetter ? '收起更优解法' : '💡 查看更优解法'}
+                      </button>
+                    )}
+                  </div>
+
+                  {showOptimized && llmAnalysis.optimized_code && (
+                    <div className="mt-2">
+                      <span className="text-xs font-medium text-zinc-500">优化代码</span>
+                      <div className="mt-1">
+                        <CodeEditor code={llmAnalysis.optimized_code} language={llmAnalysis.language as CodeLanguage} />
+                      </div>
+                    </div>
+                  )}
+
+                  {showBetter && llmAnalysis.better_code && (() => {
+                    const parsed = parseBetterCode(llmAnalysis.better_code)
+                    if (!parsed) {
+                      return (
+                        <div className="mt-2">
+                          <CodeEditor code={llmAnalysis.better_code} language={(llmAnalysis.better_language ?? llmAnalysis.language) as CodeLanguage} />
+                        </div>
+                      )
+                    }
+                    return (
+                      <div className="mt-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-medium text-zinc-500">更优解法</span>
+                          {parsed.title && <span className="text-xs font-medium text-violet-700">{parsed.title}</span>}
+                        </div>
+                        {parsed.explanation && (
+                          <p className="mt-1 text-xs text-zinc-500">{parsed.explanation}</p>
+                        )}
+                        {(parsed.time_complexity || parsed.space_complexity) && (
+                          <p className="mt-1 text-xs text-zinc-400">
+                            {parsed.time_complexity}{parsed.time_complexity && parsed.space_complexity && ' / '}{parsed.space_complexity}
+                          </p>
+                        )}
+                        <div className="mt-1">
+                          <CodeEditor code={parsed.code} language={(llmAnalysis.better_language ?? llmAnalysis.language) as CodeLanguage} />
+                        </div>
+                      </div>
+                    )
+                  })()}
+                </div>
+              )}
+
               {current.content && (
                 <div className="relative">
                   <div

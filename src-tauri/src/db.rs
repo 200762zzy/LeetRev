@@ -184,6 +184,45 @@ impl Database {
             );"
         )?;
 
+        // Migration: code_analyses table
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS code_analyses (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                problem_id INTEGER NOT NULL REFERENCES problems(id) ON DELETE CASCADE,
+                language TEXT NOT NULL,
+                code TEXT NOT NULL DEFAULT '',
+                time_complexity TEXT NOT NULL DEFAULT '',
+                space_complexity TEXT NOT NULL DEFAULT '',
+                score INTEGER NOT NULL DEFAULT 0,
+                summary TEXT DEFAULT '',
+                suggestions TEXT DEFAULT '[]',
+                runtime_ms TEXT DEFAULT '',
+                memory_mb TEXT DEFAULT '',
+                provider TEXT NOT NULL DEFAULT 'ollama',
+                model TEXT DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+            );"
+        )?;
+
+        // Migration: add optimized_code / better_solution columns to code_analyses
+        let ca_columns: Vec<String> = conn
+            .prepare("PRAGMA table_info(code_analyses)")?
+            .query_map([], |row| row.get::<_, String>(1))?
+            .filter_map(|r| r.ok())
+            .collect();
+        if !ca_columns.iter().any(|c| c == "optimized_code") {
+            conn.execute_batch("ALTER TABLE code_analyses ADD COLUMN optimized_code TEXT")?;
+        }
+        if !ca_columns.iter().any(|c| c == "better_code") {
+            conn.execute_batch("ALTER TABLE code_analyses ADD COLUMN better_code TEXT")?;
+        }
+        if !ca_columns.iter().any(|c| c == "better_title") {
+            conn.execute_batch("ALTER TABLE code_analyses ADD COLUMN better_title TEXT")?;
+        }
+        if !ca_columns.iter().any(|c| c == "better_language") {
+            conn.execute_batch("ALTER TABLE code_analyses ADD COLUMN better_language TEXT")?;
+        }
+
         // Migration: solution_approaches table
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS solution_approaches (
@@ -1447,6 +1486,80 @@ impl Database {
             )?;
         }
         Ok(())
+    }
+
+    pub fn save_code_analysis(&self, data: &AnalyzeCodeDTO, time_complexity: &str, space_complexity: &str, score: i64, summary: &str, suggestions: &str, runtime_ms: &str, memory_mb: &str, provider: &str, model: &str, optimized_code: &str, better_code: &str, better_title: &str, better_language: &str) -> Result<CodeAnalysis> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO code_analyses (problem_id, language, code, time_complexity, space_complexity, score, summary, suggestions, runtime_ms, memory_mb, provider, model, optimized_code, better_code, better_title, better_language)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+            params![data.problem_id, data.language, data.code, time_complexity, space_complexity, score, summary, suggestions, runtime_ms, memory_mb, provider, model, optimized_code, better_code, better_title, better_language],
+        )?;
+        let id = conn.last_insert_rowid();
+        drop(conn);
+        self.get_code_analysis_by_id(id)
+    }
+
+    fn get_code_analysis_by_id(&self, id: i64) -> Result<CodeAnalysis> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT id, problem_id, language, code, time_complexity, space_complexity, score, summary, suggestions, runtime_ms, memory_mb, provider, model, created_at, optimized_code, better_code, better_title, better_language
+             FROM code_analyses WHERE id = ?1",
+            params![id],
+            |row| {
+                Ok(CodeAnalysis {
+                    id: row.get(0)?,
+                    problem_id: row.get(1)?,
+                    language: row.get(2)?,
+                    code: row.get(3)?,
+                    time_complexity: row.get(4)?,
+                    space_complexity: row.get(5)?,
+                    score: row.get(6)?,
+                    summary: row.get(7)?,
+                    suggestions: row.get(8)?,
+                    runtime_ms: row.get(9)?,
+                    memory_mb: row.get(10)?,
+                    provider: row.get(11)?,
+                    model: row.get(12)?,
+                    created_at: row.get(13)?,
+                    optimized_code: row.get::<_, Option<String>>(14)?,
+                    better_code: row.get::<_, Option<String>>(15)?,
+                    better_title: row.get::<_, Option<String>>(16)?,
+                    better_language: row.get::<_, Option<String>>(17)?,
+                })
+            },
+        )
+    }
+
+    pub fn get_code_analyses(&self, problem_id: i64) -> Result<Vec<CodeAnalysis>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, problem_id, language, code, time_complexity, space_complexity, score, summary, suggestions, runtime_ms, memory_mb, provider, model, created_at, optimized_code, better_code, better_title, better_language
+             FROM code_analyses WHERE problem_id = ?1 ORDER BY created_at ASC"
+        )?;
+        let analyses = stmt.query_map(params![problem_id], |row| {
+            Ok(CodeAnalysis {
+                id: row.get(0)?,
+                problem_id: row.get(1)?,
+                language: row.get(2)?,
+                code: row.get(3)?,
+                time_complexity: row.get(4)?,
+                space_complexity: row.get(5)?,
+                score: row.get(6)?,
+                summary: row.get(7)?,
+                suggestions: row.get(8)?,
+                runtime_ms: row.get(9)?,
+                memory_mb: row.get(10)?,
+                provider: row.get(11)?,
+                model: row.get(12)?,
+                created_at: row.get(13)?,
+                optimized_code: row.get::<_, Option<String>>(14)?,
+                better_code: row.get::<_, Option<String>>(15)?,
+                better_title: row.get::<_, Option<String>>(16)?,
+                better_language: row.get::<_, Option<String>>(17)?,
+            })
+        })?.filter_map(|r| r.ok()).collect();
+        Ok(analyses)
     }
 
     pub fn delete_code_snippet(&self, id: i64) -> Result<()> {

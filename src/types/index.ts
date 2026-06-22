@@ -287,3 +287,43 @@ export interface UpdateSolutionApproachDTO {
   space_complexity?: string
   sort_order?: number
 }
+
+export interface CodeAnalysis {
+  id: number
+  problem_id: number
+  language: string
+  code: string
+  time_complexity: string
+  space_complexity: string
+  score: number
+  summary: string
+  suggestions: string
+  runtime_ms: string
+  memory_mb: string
+  provider: string
+  model: string
+  created_at: string
+  optimized_code: string | null
+  better_code: string | null
+  better_title: string | null
+  better_language: string | null
+}
+
+export interface AnalyzeCodeDTO {
+  problem_id: number
+  code: string
+  language: string
+  runtime_ms?: string
+  memory_mb?: string
+}
+
+export type LlmProvider = 'ollama' | 'openai'
+
+export interface LlmSettings {
+  provider: LlmProvider
+  ollama_url: string
+  ollama_model: string
+  openai_key: string
+  openai_base_url: string
+  openai_model: string
+}

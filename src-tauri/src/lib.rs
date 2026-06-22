@@ -2,6 +2,7 @@ mod db;
 mod models;
 mod commands;
 mod scraper;
+mod llm;
 
 use db::Database;
 use std::sync::Mutex;
@@ -70,6 +71,8 @@ pub fn run() {
             commands::refresh_submission_stats,
             commands::sync_ac_codes,
             commands::submit_code,
+            commands::analyze_code,
+            commands::get_code_analyses,
             commands::open_leetcode_login,
         ])
         .run(tauri::generate_context!())
