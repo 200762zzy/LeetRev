@@ -73,7 +73,7 @@ export function ReviewHistory() {
       </div>
 
       {/* Stats bar */}
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4 lg:gap-4">
+      <div className="grid grid-cols-4 gap-4">
         <div className="card p-4 text-center">
           <div className="text-2xl font-bold text-zinc-900">{stats.total}</div>
           <div className="text-xs text-zinc-500">总复习次数</div>

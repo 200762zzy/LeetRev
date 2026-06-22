@@ -2,7 +2,7 @@
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "LeetRev",
   "version": "0.8.0",
-  "identifier": "com.leetrev.app",
+  "identifier": "com.leetrev.desktop",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:5173",
@@ -34,8 +34,7 @@
       "icons/icon.ico"
     ],
     "android": {
-      "debugApplicationIdSuffix": ".debug",
-      "minSdkVersion": 24
+      "debugApplicationIdSuffix": ".debug"
     }
   }
 }

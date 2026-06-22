@@ -186,7 +186,7 @@ export function ApiSearch({ open, onClose, problemId }: Props) {
     <div className="fixed inset-0 z-50 flex items-start justify-center pt-12" onClick={onClose}>
       <div className="fixed inset-0 bg-black/40 backdrop-blur-sm" />
       <div
-        className="relative w-full sm:max-w-2xl sm:rounded-xl border border-zinc-200 bg-white shadow-2xl sm:m-4 h-full sm:h-auto overflow-y-auto"
+        className="relative w-full max-w-2xl rounded-xl border border-zinc-200 bg-white shadow-2xl"
         onClick={e => e.stopPropagation()}
       >
         {/* Header */}
