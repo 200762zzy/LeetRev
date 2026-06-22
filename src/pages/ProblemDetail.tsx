@@ -164,8 +164,8 @@ export function ProblemDetail() {
         </button>
       </div>
 
-      <div className="grid grid-cols-5 gap-6">
-        <div className="col-span-2 space-y-4">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-5">
+        <div className="lg:col-span-2 space-y-4">
           <div className="card">
             <div className="mb-3 flex items-center justify-between">
               <h3 className="text-sm font-semibold text-zinc-900">题目描述</h3>
@@ -205,7 +205,7 @@ export function ProblemDetail() {
           </div>
         </div>
 
-        <div className="col-span-3 space-y-4">
+        <div className="lg:col-span-3 space-y-4">
           {reviews.length > 0 && (
             <div className="card">
               <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-zinc-900">

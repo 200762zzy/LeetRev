@@ -110,7 +110,7 @@ export function Welcome() {
         </button>
       </div>
 
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4 lg:gap-4">
         {cards.map((card) => (
           <div key={card.label} className="card">
             <div className="flex items-center justify-between">
@@ -163,7 +163,7 @@ export function Welcome() {
         <>
           <ReviewHeatmap data={heatmap} />
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
             <div className="card">
               <h2 className="mb-1 text-sm font-semibold text-zinc-900">难度分布</h2>
               <p className="mb-3 text-xs text-zinc-400">按题目难度分布统计</p>

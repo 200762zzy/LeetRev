@@ -237,10 +237,10 @@ export function CustomApiForm({ open, onClose, entry, defaultLanguage, defaultCo
   if (!open) return null
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center pt-12" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-start justify-center sm:pt-12" onClick={onClose}>
       <div className="fixed inset-0 bg-black/40 backdrop-blur-sm" />
       <div
-        className="relative w-full max-w-lg rounded-xl border border-zinc-200 bg-white shadow-2xl"
+        className="relative w-full sm:max-w-lg sm:rounded-xl border border-zinc-200 bg-white shadow-2xl h-full sm:h-auto overflow-y-auto"
         onClick={e => e.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b border-zinc-100 px-4 py-3">
