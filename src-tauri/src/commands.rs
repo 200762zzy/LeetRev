@@ -5,6 +5,7 @@ use crate::models::*;
 use crate::scraper;
 use crate::scraper::SyncProgressEvent;
 use crate::LeetcodeCookie;
+use rusqlite::params;
 
 #[tauri::command]
 pub fn get_tags(db: State<Database>) -> Result<Vec<Tag>, String> {
@@ -504,4 +505,261 @@ pub async fn analyze_code(db: State<'_, Database>, data: AnalyzeCodeDTO) -> Resu
 #[tauri::command]
 pub fn get_code_analyses(db: State<Database>, problem_id: i64) -> Result<Vec<CodeAnalysis>, String> {
     db.get_code_analyses(problem_id).map_err(|e| e.to_string())
+}
+
+// ---- Daily Tracking Commands ----
+
+#[tauri::command]
+pub fn get_daily_trackers(db: State<Database>) -> Result<Vec<DailyTracker>, String> {
+    db.get_daily_trackers().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn create_daily_tracker(db: State<Database>, name: String, start_date: String) -> Result<DailyTracker, String> {
+    db.create_daily_tracker(&name, &start_date).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn delete_daily_tracker(db: State<Database>, id: i64) -> Result<(), String> {
+    db.delete_daily_tracker(id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn get_daily_fetch_logs(db: State<Database>, tracker_id: i64) -> Result<Vec<DailyFetchLog>, String> {
+    db.get_daily_fetch_logs(tracker_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn get_daily_fetch_problems(db: State<Database>, fetch_log_id: i64) -> Result<Vec<Problem>, String> {
+    db.get_daily_fetch_problems(fetch_log_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn check_daily_changes(
+    db: State<'_, Database>,
+    tracker_id: i64,
+    cookie: Option<String>,
+) -> Result<CheckDailyChangesResult, String> {
+    let effective_cookie = cookie
+        .or_else(|| db.get_setting("leetcode_session").ok().flatten())
+        .ok_or_else(|| "请先在设置页面配置 LEETCODE_SESSION cookie".to_string())?;
+
+    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+
+    if db.has_daily_fetch(tracker_id, &today).map_err(|e| e.to_string())? {
+        return Err("今天已经检测过了".into());
+    }
+
+    // Try GraphQL method first (username from settings or auto-detected)
+    let settings_username = db.get_setting("leetcode_username").ok().flatten();
+    match scraper::fetch_recent_ac_submissions_graphql(&effective_cookie, settings_username.as_deref(), 50).await {
+        Ok(submissions) => {
+            // GraphQL path — use existing slugs set for dedup
+            let mut existing_ids = db.get_all_daily_fetch_problem_ids().map_err(|e| e.to_string())?;
+            let mut new_problems = Vec::new();
+            let mut redo_problems = Vec::new();
+            let mut seen_slugs = std::collections::HashSet::new();
+
+            let cache = scraper::get_cache().await?;
+            let slug_to_id: std::collections::HashMap<String, i64> = cache
+                .iter()
+                .map(|(fid, entry)| (entry.title_slug.clone(), *fid))
+                .collect();
+
+            let mut today_new_count = 0i64;
+            let mut today_redo_count = 0i64;
+
+            for sub in &submissions {
+                if !seen_slugs.insert(sub.title_slug.clone()) {
+                    continue;
+                }
+
+                let existing_problem_id = db.find_problem_by_slug(&sub.title_slug)
+                    .map_err(|e| e.to_string())?;
+
+                match existing_problem_id {
+                    Some(pid) => {
+                        if existing_ids.contains(&pid) {
+                            continue;
+                        }
+                        today_redo_count += 1;
+                        redo_problems.push(sub.title_slug.clone());
+                    }
+                    None => {
+                        let leetcode_id = slug_to_id.get(&sub.title_slug).copied();
+                        if let Some(lid) = leetcode_id {
+                            match crate::scraper::fetch_problem_info(lid).await {
+                                Ok(info) => {
+                                    let create = CreateProblemDTO {
+                                        leetcode_id: Some(info.leetcode_id),
+                                        title: info.title,
+                                        title_cn: Some(info.title_cn),
+                                        difficulty: info.difficulty,
+                                        status: Some("solved".into()),
+                                        leetcode_url: Some(info.url),
+                                        notes: None,
+                                        content: Some(info.content),
+                                        tag_ids: vec![],
+                                    };
+                                    if let Ok(p) = db.create_problem(&create) {
+                                        existing_ids.insert(p.id);
+                                        today_new_count += 1;
+                                        new_problems.push(sub.title_slug.clone());
+                                    }
+                                }
+                                Err(_) => {
+                                    let create = CreateProblemDTO {
+                                        leetcode_id: Some(lid),
+                                        title: sub.title_slug.clone(),
+                                        title_cn: None,
+                                        difficulty: "medium".into(),
+                                        status: Some("solved".into()),
+                                        leetcode_url: Some(format!("https://leetcode.cn/problems/{}/", sub.title_slug)),
+                                        notes: None,
+                                        content: None,
+                                        tag_ids: vec![],
+                                    };
+                                    if let Ok(p) = db.create_problem(&create) {
+                                        existing_ids.insert(p.id);
+                                        today_new_count += 1;
+                                        new_problems.push(sub.title_slug.clone());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if today_new_count > 0 || today_redo_count > 0 {
+                let conn = db.conn.lock().unwrap();
+                conn.execute(
+                    "INSERT INTO daily_fetch_logs (tracker_id, fetch_date, new_count, redo_count)
+                     VALUES (?1, ?2, ?3, ?4)",
+                    params![tracker_id, today, today_new_count, today_redo_count],
+                ).map_err(|e| e.to_string())?;
+                let log_id = conn.last_insert_rowid();
+
+                for slug in &new_problems {
+                    if let Some(pid) = db.find_problem_by_slug(slug).map_err(|e| e.to_string())? {
+                        let _ = conn.execute(
+                            "INSERT OR IGNORE INTO daily_fetch_problems (fetch_log_id, problem_id, change_type)
+                             VALUES (?1, ?2, 'new')",
+                            params![log_id, pid],
+                        );
+                    }
+                }
+                for slug in &redo_problems {
+                    if let Some(pid) = db.find_problem_by_slug(slug).map_err(|e| e.to_string())? {
+                        let _ = conn.execute(
+                            "INSERT OR IGNORE INTO daily_fetch_problems (fetch_log_id, problem_id, change_type)
+                             VALUES (?1, ?2, 'redo')",
+                            params![log_id, pid],
+                        );
+                    }
+                }
+            }
+
+            Ok(CheckDailyChangesResult {
+                fetch_date: today,
+                new_count: today_new_count,
+                redo_count: today_redo_count,
+                total_submissions: submissions.len() as i64,
+                new_problems,
+                redo_problems,
+            })
+        }
+        Err(_) => {
+            // Fallback: use progress API (new-only detection, max 30 per run)
+            let progress = scraper::fetch_user_progress(Some(&effective_cookie)).await?;
+            let cache = scraper::get_cache().await.ok();
+
+            let mut new_slugs = Vec::new();
+            for item in &progress {
+                if db.find_problem_by_slug(&item.title_slug).map_err(|e| e.to_string())?.is_some() {
+                    continue;
+                }
+                if new_slugs.len() >= 30 {
+                    break;
+                }
+                new_slugs.push(item.title_slug.clone());
+            }
+
+            let cache_map: std::collections::HashMap<String, i64> = cache
+                .map(|c| c.into_iter().map(|(fid, entry)| (entry.title_slug, fid)).collect())
+                .unwrap_or_default();
+
+            let mut created_count = 0i64;
+            let mut created_slugs = Vec::new();
+
+            for slug in &new_slugs {
+                if let Some(&lid) = cache_map.get(slug) {
+                    match crate::scraper::fetch_problem_info(lid).await {
+                        Ok(info) => {
+                            let create = CreateProblemDTO {
+                                leetcode_id: Some(info.leetcode_id),
+                                title: info.title,
+                                title_cn: Some(info.title_cn),
+                                difficulty: info.difficulty,
+                                status: Some("solved".into()),
+                                leetcode_url: Some(info.url),
+                                notes: None,
+                                content: Some(info.content),
+                                tag_ids: vec![],
+                            };
+                            if db.create_problem(&create).is_ok() {
+                                created_count += 1;
+                                created_slugs.push(slug.clone());
+                            }
+                        }
+                        Err(_) => {
+                            let create = CreateProblemDTO {
+                                leetcode_id: Some(lid),
+                                title: slug.clone(),
+                                title_cn: None,
+                                difficulty: "medium".into(),
+                                status: Some("solved".into()),
+                                leetcode_url: Some(format!("https://leetcode.cn/problems/{}/", slug)),
+                                notes: None,
+                                content: None,
+                                tag_ids: vec![],
+                            };
+                            if db.create_problem(&create).is_ok() {
+                                created_count += 1;
+                                created_slugs.push(slug.clone());
+                            }
+                        }
+                    }
+                }
+            }
+
+            if created_count > 0 {
+                let conn = db.conn.lock().unwrap();
+                conn.execute(
+                    "INSERT INTO daily_fetch_logs (tracker_id, fetch_date, new_count, redo_count)
+                     VALUES (?1, ?2, ?3, ?4)",
+                    params![tracker_id, today, created_count, 0],
+                ).map_err(|e| e.to_string())?;
+                let log_id = conn.last_insert_rowid();
+                for slug in &created_slugs {
+                    if let Ok(Some(pid)) = db.find_problem_by_slug(slug) {
+                        let _ = conn.execute(
+                            "INSERT OR IGNORE INTO daily_fetch_problems (fetch_log_id, problem_id, change_type)
+                             VALUES (?1, ?2, 'new')",
+                            params![log_id, pid],
+                        );
+                    }
+                }
+            }
+
+            Ok(CheckDailyChangesResult {
+                fetch_date: today,
+                new_count: created_count,
+                redo_count: 0,
+                total_submissions: created_count,
+                new_problems: created_slugs,
+                redo_problems: vec![],
+            })
+        }
+    }
 }

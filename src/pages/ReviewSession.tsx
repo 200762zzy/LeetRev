@@ -19,6 +19,8 @@ export function ReviewSession() {
   const tagId = tagIdParam ? Number(tagIdParam) : null
   const problemIdParam = searchParams.get('problemId')
   const problemId = problemIdParam ? Number(problemIdParam) : null
+  const dailyLogIdParam = searchParams.get('dailyLogId')
+  const dailyLogId = dailyLogIdParam ? Number(dailyLogIdParam) : null
 
   const [queue, setQueue] = useState<Problem[]>([])
   const [index, setIndex] = useState(0)
@@ -54,18 +56,23 @@ export function ReviewSession() {
   const [showOptimized, setShowOptimized] = useState(false)
   const [showBetter, setShowBetter] = useState(false)
 
-  const loadQueue = useCallback(async (tid: number | null, pid: number | null) => {
+  const loadQueue = useCallback(async (tid: number | null, pid: number | null, did: number | null) => {
     setLoading(true)
     try {
-      const data = await invoke<Problem[]>('get_review_queue', { tagId: tid })
-      if (pid != null) {
-        const idx = data.findIndex(p => p.id === pid)
-        if (idx > 0) {
-          const [item] = data.splice(idx, 1)
-          data.unshift(item)
-        } else if (idx === -1) {
-          const p = await invoke<Problem>('get_problem', { id: pid })
-          data.unshift(p)
+      let data: Problem[]
+      if (did != null) {
+        data = await invoke<Problem[]>('get_daily_fetch_problems', { fetchLogId: did })
+      } else {
+        data = await invoke<Problem[]>('get_review_queue', { tagId: tid })
+        if (pid != null) {
+          const idx = data.findIndex(p => p.id === pid)
+          if (idx > 0) {
+            const [item] = data.splice(idx, 1)
+            data.unshift(item)
+          } else if (idx === -1) {
+            const p = await invoke<Problem>('get_problem', { id: pid })
+            data.unshift(p)
+          }
         }
       }
       setQueue(data)
@@ -79,13 +86,13 @@ export function ReviewSession() {
     if (tab === 'system') {
       setCompleted(false)
       setIndex(0)
-      loadQueue(null, problemId)
+      loadQueue(null, problemId, dailyLogId)
     } else if (selectedTagId != null) {
       setCompleted(false)
       setIndex(0)
-      loadQueue(selectedTagId, problemId)
+      loadQueue(selectedTagId, problemId, dailyLogId)
     }
-  }, [loadQueue, tab, selectedTagId, problemId])
+  }, [loadQueue, tab, selectedTagId, problemId, dailyLogId])
 
   useEffect(() => {
     if (tab === 'column' && selectedTagId) {
@@ -409,17 +416,17 @@ export function ReviewSession() {
               <ArrowLeft className="h-5 w-5" />
             </button>
             <h1 className="text-xl font-bold text-zinc-900">
-              {tab === 'column' ? `${selectedTagName} 专栏复习` : '系统复习'}
+              {dailyLogId ? '每日追踪复习' : tab === 'column' ? `${selectedTagName} 专栏复习` : '系统复习'}
             </h1>
           </div>
-          {TabBar}
+          {!dailyLogId && TabBar}
         </div>
         <div className="mx-auto max-w-lg space-y-6 py-20 text-center">
           <CheckCircle className="mx-auto h-16 w-16 text-emerald-500" />
           <h1 className="text-2xl font-bold text-zinc-900">复习完成！</h1>
           <p className="text-zinc-500">本次复习了 {queue.length} 道题目</p>
           <div className="flex items-center justify-center gap-3">
-            <button className="btn-primary" onClick={() => loadQueue(tid, null)}>
+            <button className="btn-primary" onClick={() => loadQueue(tid, null, null)}>
               <BookOpen className="h-4 w-4" />
               继续复习
             </button>
@@ -450,15 +457,15 @@ export function ReviewSession() {
               <ArrowLeft className="h-5 w-5" />
             </button>
             <h1 className="text-xl font-bold text-zinc-900">
-              {tab === 'column' ? `${selectedTagName} 专栏复习` : '系统复习'}
+              {dailyLogId ? '每日追踪复习' : tab === 'column' ? `${selectedTagName} 专栏复习` : '系统复习'}
             </h1>
           </div>
-          {TabBar}
+          {!dailyLogId && TabBar}
         </div>
         <div className="mx-auto max-w-lg space-y-6 py-20 text-center">
           <CheckCircle className="mx-auto h-16 w-16 text-zinc-300" />
-          <h1 className="text-2xl font-bold text-zinc-900">没有待复习的题目</h1>
-          <p className="text-zinc-500">所有题目都已按计划复习过了，明天再来吧</p>
+          <h1 className="text-2xl font-bold text-zinc-900">{dailyLogId ? '该日题目已复习完毕' : '没有待复习的题目'}</h1>
+          <p className="text-zinc-500">{dailyLogId ? '所有题目已复习' : '所有题目都已按计划复习过了，明天再来吧'}</p>
           <div className="flex items-center justify-center gap-3">
             {tab === 'column' && (
               <button className="btn-secondary" onClick={() => {
@@ -487,7 +494,7 @@ export function ReviewSession() {
           </button>
           <div className="flex-1">
             <h1 className="text-xl font-bold text-zinc-900">
-              {tab === 'column' ? `${selectedTagName} 专栏复习` : '系统复习'}
+              {dailyLogId ? '每日追踪复习' : tab === 'column' ? `${selectedTagName} 专栏复习` : '系统复习'}
             </h1>
             <p className="text-sm text-zinc-500">第 {index + 1}/{queue.length} 题</p>
           </div>
@@ -498,7 +505,7 @@ export function ReviewSession() {
             />
           </div>
         </div>
-        {TabBar}
+        {!dailyLogId && TabBar}
       </div>
 
       {tab === 'column' && (

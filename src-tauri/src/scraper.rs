@@ -91,9 +91,9 @@ struct TopicTag {
 static PROBLEM_CACHE: Mutex<Option<HashMap<i64, ProblemMapEntry>>> = Mutex::new(None);
 
 #[derive(Clone)]
-struct ProblemMapEntry {
-    title_slug: String,
-    question_id: i64,
+pub struct ProblemMapEntry {
+    pub title_slug: String,
+    pub question_id: i64,
 }
 
 fn map_tag_name(name: &str) -> String {
@@ -214,7 +214,7 @@ async fn build_problem_cache() -> Result<HashMap<i64, ProblemMapEntry>, String> 
     Ok(map)
 }
 
-async fn get_cache() -> Result<HashMap<i64, ProblemMapEntry>, String> {
+pub async fn get_cache() -> Result<HashMap<i64, ProblemMapEntry>, String> {
     {
         let cache = PROBLEM_CACHE.lock().map_err(|e| format!("缓存锁错误: {}", e))?;
         if let Some(ref c) = *cache {
@@ -841,6 +841,114 @@ pub async fn fetch_all_accepted_submissions(
     }
 
     Ok(results)
+}
+
+pub async fn fetch_recent_ac_submissions_graphql(
+    cookie_str: &str,
+    settings_username: Option<&str>,
+    limit: i32,
+) -> Result<Vec<super::models::DailySubmission>, String> {
+    let cookies = parse_cookies(cookie_str);
+    if cookies.is_empty() {
+        return Err("缺少 LEETCODE_SESSION cookie".into());
+    }
+
+    let client = new_client();
+    let now = chrono::Local::now().timestamp();
+
+    // Try to get username: first via userStatus (may need CSRF), then from settings
+    let username = match try_get_username_via_graphql(&client, &cookies).await {
+        Ok(u) => u,
+        Err(_) => match settings_username {
+            Some(u) if !u.is_empty() => u.to_string(),
+            _ => return Err("无法获取用户名，请在设置中配置 LeetCode 用户名，或在高级设置中配置 LEETCODE_SESSION".into()),
+        },
+    };
+
+    let list_query = serde_json::json!({
+        "query": r#"
+            query recentAcSubmissions($username: String!, $limit: Int!) {
+                recentAcSubmissionList(username: $username, limit: $limit) {
+                    titleSlug
+                }
+            }
+        "#,
+        "variables": { "username": username, "limit": limit },
+        "operationName": "recentAcSubmissions"
+    });
+
+    let resp = client
+        .post("https://leetcode.cn/graphql/")
+        .header("Cookie", &cookies)
+        .json(&list_query)
+        .send()
+        .await
+        .map_err(|e| format!("请求最近提交失败: {}", e))?;
+
+    if !resp.status().is_success() {
+        return Err(format!("最近提交 API 返回状态码: {}", resp.status()));
+    }
+
+    let data: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("解析最近提交失败: {}", e))?;
+
+    let submissions = data["data"]["recentAcSubmissionList"]
+        .as_array()
+        .ok_or_else(|| "响应中缺少 recentAcSubmissionList 字段")?;
+
+    let mut results = Vec::new();
+    for sub in submissions {
+        if let Some(slug) = sub["titleSlug"].as_str() {
+            results.push(super::models::DailySubmission {
+                title_slug: slug.to_string(),
+                timestamp: now,
+                status_display: "Accepted".into(),
+            });
+        }
+    }
+
+    Ok(results)
+}
+
+async fn try_get_username_via_graphql(
+    client: &reqwest::Client,
+    cookies: &str,
+) -> Result<String, String> {
+    let status_query = serde_json::json!({
+        "query": r#"
+            query userStatus {
+                userStatus {
+                    username
+                }
+            }
+        "#,
+        "operationName": "userStatus"
+    });
+
+    let resp = client
+        .post("https://leetcode.cn/graphql/")
+        .header("Cookie", cookies)
+        .json(&status_query)
+        .send()
+        .await
+        .map_err(|_| "请求用户状态失败".to_string())?;
+
+    if !resp.status().is_success() {
+        return Err(format!("用户状态 API 返回 {}", resp.status()));
+    }
+
+    let data: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|_| "解析用户状态响应失败".to_string())?;
+
+    data["data"]["userStatus"]["username"]
+        .as_str()
+        .filter(|u| !u.is_empty())
+        .map(String::from)
+        .ok_or_else(|| "userStatus 未返回用户名".to_string())
 }
 
 pub async fn fetch_last_accepted_submission(

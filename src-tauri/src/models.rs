@@ -1,6 +1,51 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DailyTracker {
+    pub id: i64,
+    pub name: String,
+    pub start_date: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DailyFetchLog {
+    pub id: i64,
+    pub tracker_id: i64,
+    pub fetch_date: String,
+    pub new_count: i64,
+    pub redo_count: i64,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DailyFetchProblem {
+    pub id: i64,
+    pub fetch_log_id: i64,
+    pub problem_id: i64,
+    pub change_type: String,
+    pub submissions_count: i64,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DailySubmission {
+    pub title_slug: String,
+    pub timestamp: i64,
+    pub status_display: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CheckDailyChangesResult {
+    pub fetch_date: String,
+    pub new_count: i64,
+    pub redo_count: i64,
+    pub total_submissions: i64,
+    pub new_problems: Vec<String>,
+    pub redo_problems: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Tag {
     pub id: i64,
     pub name: String,

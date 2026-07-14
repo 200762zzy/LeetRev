@@ -317,6 +317,40 @@ export interface AnalyzeCodeDTO {
   memory_mb?: string
 }
 
+export interface DailyTracker {
+  id: number
+  name: string
+  start_date: string
+  created_at: string
+}
+
+export interface DailyFetchLog {
+  id: number
+  tracker_id: number
+  fetch_date: string
+  new_count: number
+  redo_count: number
+  created_at: string
+}
+
+export interface DailyFetchProblem {
+  id: number
+  fetch_log_id: number
+  problem_id: number
+  change_type: 'new' | 'redo'
+  submissions_count: number
+  created_at: string
+}
+
+export interface CheckDailyChangesResult {
+  fetch_date: string
+  new_count: number
+  redo_count: number
+  total_submissions: number
+  new_problems: string[]
+  redo_problems: string[]
+}
+
 export type LlmProvider = 'ollama' | 'openai'
 
 export interface LlmSettings {

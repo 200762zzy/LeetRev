@@ -6,6 +6,7 @@ import type { SyncResult, SyncProgressEvent, SyncAcCodesResult, LlmProvider } fr
 
 export function Settings() {
   const [cookie, setCookie] = useState('')
+  const [username, setUsername] = useState('')
   const [syncing, setSyncing] = useState(false)
   const [result, setResult] = useState<SyncResult | null>(null)
   const [progress, setProgress] = useState<SyncProgressEvent | null>(null)
@@ -20,6 +21,9 @@ export function Settings() {
   useEffect(() => {
     invoke<string | null>('get_setting', { key: 'leetcode_session' }).then((v) => {
       if (v) setCookie(v)
+    })
+    invoke<string | null>('get_setting', { key: 'leetcode_username' }).then((v) => {
+      if (v) setUsername(v)
     })
   }, [])
 
@@ -47,6 +51,9 @@ export function Settings() {
       if (cookie) {
         await invoke('set_setting', { key: 'leetcode_session', value: cookie })
         setSaved(true)
+      }
+      if (username) {
+        await invoke('set_setting', { key: 'leetcode_username', value: username })
       }
     } catch (e) {
       alert('同步失败：' + String(e))
@@ -111,6 +118,19 @@ export function Settings() {
           <p className="text-xs text-zinc-400">
             点击上方按钮在默认浏览器打开 leetcode.cn 登录页，登录后打开开发者工具（F12），
             转到 Application → Cookies → leetcode.cn → 找到 <code>LEETCODE_SESSION</code>，复制整行（<code>LEETCODE_SESSION=xxx</code>）粘贴到此处。
+          </p>
+        </div>
+
+        <div className="space-y-1.5">
+          <label className="text-sm font-medium text-zinc-700">LeetCode 用户名（可选）</label>
+          <input
+            className="input-field"
+            placeholder="你的 leetcode.cn 用户名"
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+          />
+          <p className="text-xs text-zinc-400">
+            配置后每日追踪可直接获取最近提交，无需 CSRF token。可在力扣个人主页地址栏找到。
           </p>
         </div>
 

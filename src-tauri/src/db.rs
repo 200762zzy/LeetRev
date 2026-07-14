@@ -240,6 +240,36 @@ impl Database {
             );"
         )?;
 
+        // Migration: daily tracking tables
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS daily_trackers (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL DEFAULT '',
+                start_date TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+            );
+
+            CREATE TABLE IF NOT EXISTS daily_fetch_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tracker_id INTEGER NOT NULL REFERENCES daily_trackers(id) ON DELETE CASCADE,
+                fetch_date TEXT NOT NULL,
+                new_count INTEGER NOT NULL DEFAULT 0,
+                redo_count INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+                UNIQUE(tracker_id, fetch_date)
+            );
+
+            CREATE TABLE IF NOT EXISTS daily_fetch_problems (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                fetch_log_id INTEGER NOT NULL REFERENCES daily_fetch_logs(id) ON DELETE CASCADE,
+                problem_id INTEGER NOT NULL REFERENCES problems(id) ON DELETE CASCADE,
+                change_type TEXT NOT NULL CHECK(change_type IN ('new', 'redo')),
+                submissions_count INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+                UNIQUE(fetch_log_id, problem_id)
+            );"
+        )?;
+
         Ok(())
     }
 
@@ -972,6 +1002,178 @@ impl Database {
         let mut result = Vec::new();
         for row in rows {
             result.push(row?);
+        }
+        Ok(result)
+    }
+
+    pub fn get_daily_trackers(&self) -> Result<Vec<DailyTracker>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, name, start_date, created_at FROM daily_trackers ORDER BY created_at DESC"
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok(DailyTracker {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                start_date: row.get(2)?,
+                created_at: row.get(3)?,
+            })
+        })?;
+        Ok(rows.filter_map(|r| r.ok()).collect())
+    }
+
+    pub fn create_daily_tracker(&self, name: &str, start_date: &str) -> Result<DailyTracker> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO daily_trackers (name, start_date) VALUES (?1, ?2)",
+            params![name, start_date],
+        )?;
+        let id = conn.last_insert_rowid();
+        Ok(DailyTracker {
+            id,
+            name: name.to_string(),
+            start_date: start_date.to_string(),
+            created_at: chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+        })
+    }
+
+    pub fn delete_daily_tracker(&self, id: i64) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("DELETE FROM daily_trackers WHERE id = ?1", params![id])?;
+        Ok(())
+    }
+
+    pub fn has_daily_fetch(&self, tracker_id: i64, fetch_date: &str) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM daily_fetch_logs WHERE tracker_id = ?1 AND fetch_date = ?2",
+            params![tracker_id, fetch_date],
+            |row| row.get(0),
+        )?;
+        Ok(count > 0)
+    }
+
+    pub fn get_daily_fetch_logs(&self, tracker_id: i64) -> Result<Vec<DailyFetchLog>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, tracker_id, fetch_date, new_count, redo_count, created_at
+             FROM daily_fetch_logs WHERE tracker_id = ?1 ORDER BY fetch_date DESC"
+        )?;
+        let rows = stmt.query_map(params![tracker_id], |row| {
+            Ok(DailyFetchLog {
+                id: row.get(0)?,
+                tracker_id: row.get(1)?,
+                fetch_date: row.get(2)?,
+                new_count: row.get(3)?,
+                redo_count: row.get(4)?,
+                created_at: row.get(5)?,
+            })
+        })?;
+        Ok(rows.filter_map(|r| r.ok()).collect())
+    }
+
+    pub fn find_problem_by_slug(&self, slug: &str) -> Result<Option<i64>> {
+        let conn = self.conn.lock().unwrap();
+        let pattern = format!("%/{}/%", slug);
+        let result = conn.query_row(
+            "SELECT id FROM problems WHERE leetcode_url LIKE ?1 LIMIT 1",
+            params![pattern],
+            |row| row.get::<_, i64>(0),
+        );
+        match result {
+            Ok(id) => Ok(Some(id)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    pub fn create_daily_fetch_log(&self, tracker_id: i64, fetch_date: &str, new_count: i64, redo_count: i64) -> Result<i64> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT OR IGNORE INTO daily_fetch_logs (tracker_id, fetch_date, new_count, redo_count)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![tracker_id, fetch_date, new_count, redo_count],
+        )?;
+        let id = conn.last_insert_rowid();
+        // Update counts in case of IGNORE
+        if new_count > 0 || redo_count > 0 {
+            conn.execute(
+                "UPDATE daily_fetch_logs SET new_count = new_count + ?1, redo_count = redo_count + ?2
+                 WHERE id = ?3",
+                params![new_count, redo_count, id],
+            )?;
+        }
+        Ok(id)
+    }
+
+    pub fn get_all_daily_fetch_problem_ids(&self) -> Result<std::collections::HashSet<i64>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT DISTINCT problem_id FROM daily_fetch_problems"
+        )?;
+        let rows = stmt.query_map([], |row| row.get::<_, i64>(0))?;
+        let mut ids = std::collections::HashSet::new();
+        for row in rows {
+            if let Ok(id) = row {
+                ids.insert(id);
+            }
+        }
+        Ok(ids)
+    }
+
+    pub fn link_daily_fetch_problem(&self, fetch_log_id: i64, problem_id: i64, change_type: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT OR IGNORE INTO daily_fetch_problems (fetch_log_id, problem_id, change_type)
+             VALUES (?1, ?2, ?3)",
+            params![fetch_log_id, problem_id, change_type],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_daily_fetch_problems(&self, fetch_log_id: i64) -> Result<Vec<Problem>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT p.id, p.leetcode_id, p.title, p.title_cn, p.difficulty, p.status,
+                    p.leetcode_url, p.notes, p.content, p.solution_code, p.code_language,
+                    p.created_at, p.updated_at
+             FROM problems p
+             INNER JOIN daily_fetch_problems dfp ON dfp.problem_id = p.id
+             WHERE dfp.fetch_log_id = ?1
+             ORDER BY dfp.created_at ASC"
+        )?;
+        let problems = stmt.query_map(params![fetch_log_id], |row| {
+            Ok(Problem {
+                id: row.get(0)?,
+                leetcode_id: row.get(1)?,
+                title: row.get(2)?,
+                title_cn: row.get(3)?,
+                difficulty: row.get(4)?,
+                status: row.get(5)?,
+                leetcode_url: row.get(6)?,
+                notes: row.get(7)?,
+                content: row.get(8)?,
+                solution_code: row.get(9)?,
+                code_language: row.get(10)?,
+                created_at: row.get(11)?,
+                updated_at: row.get(12)?,
+                tags: Vec::new(),
+            })
+        })?;
+        let mut result: Vec<Problem> = problems.filter_map(|r| r.ok()).collect();
+        // Load tags for each problem
+        for problem in &mut result {
+            if let Ok(mut stmt) = conn.prepare(
+                "SELECT t.id, t.name, t.color FROM tags t
+                 INNER JOIN problem_tags pt ON pt.tag_id = t.id
+                 WHERE pt.problem_id = ?1"
+            ) {
+                if let Ok(rows) = stmt.query_map(params![problem.id], |row| {
+                    Ok(Tag { id: row.get(0)?, name: row.get(1)?, color: row.get(2)? })
+                }) {
+                    problem.tags = rows.filter_map(|r| r.ok()).collect();
+                }
+            }
         }
         Ok(result)
     }
